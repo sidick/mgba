@@ -1090,6 +1090,17 @@ if(BUILD_HEADLESS)
 	install(TARGETS ${BINARY_NAME}-headless DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${BINARY_NAME}-headless)
 endif()
 
+if(DEFINED AMIGA)
+	# src/platform/test/perf-main.c (BUILD_PERF) unconditionally depends on
+	# mgba-util/socket.h, which needs getaddrinfo/freeaddrinfo -- not
+	# available on classic AmigaOS TCP/IP stacks (Roadshow's headers
+	# predate RFC 3493). src/platform/amiga/bench-main.c is a trimmed copy
+	# without the -D server mode or the socket dependency.
+	add_executable(${BINARY_NAME}-bench ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/bench-main.c)
+	target_link_libraries(${BINARY_NAME}-bench ${PLATFORM_LIBRARY} ${BINARY_NAME})
+	target_compile_definitions(${BINARY_NAME}-bench PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
+endif()
+
 if(NOT USE_CMOCKA)
 	set(BUILD_SUITE OFF)
 endif()

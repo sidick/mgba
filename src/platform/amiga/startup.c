@@ -1,11 +1,13 @@
-/* libnix's crt0 (ncrt0.o, selected via -mcrt=nix) requires this control
- * variable to be defined by the application. Non-zero means "don't require
- * a CLI command line to be parsed/present" -- appropriate for an emulator
- * frontend that takes its ROM path as its one real argument either way.
- * Unused under -mcrt=newlib (the current toolchain default -- see
- * CMakeToolchain.txt), but harmless to keep defined in case the build
- * ever switches to libnix. */
-int __nocommandline = 1;
+/* Do NOT define __nocommandline here. Under -mcrt=nix (libnix), it's a
+ * flag the application sets; but we build with -mcrt=newlib, where
+ * __nocommandline is instead the name of newlib's own real init function
+ * (src/sys/amigaos/__nocommandline.c, ADD2INIT(__nocommandline, -40))
+ * that parses the raw AmigaDOS command line into argc/argv. Defining our
+ * own symbol of that name silently replaces newlib's real one at link
+ * time -- exactly the footgun newlib's own source comments on: "If you
+ * replace this by an own reference called __nocommandline you get no
+ * commandline arguments." (Learned the hard way: every program here was
+ * seeing argc == 0 until this got removed.) */
 
 #include <complex.h>
 #include <math.h>
