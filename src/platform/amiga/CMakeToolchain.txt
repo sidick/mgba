@@ -1,10 +1,11 @@
-# Toolchain file for cross-compiling to classic AmigaOS (m68k) using Bebbo's
-# m68k-amigaos-gcc (https://github.com/bebbo/amiga-gcc).
+# Toolchain file for cross-compiling to classic AmigaOS (m68k) using the
+# AmigaPorts/Bebbo m68k-amigaos-gcc toolchain
+# (https://github.com/AmigaPorts/m68k-amigaos-gcc).
 #
 # Usage:
 #   cmake -B build-amiga -G Ninja \
 #     -DCMAKE_TOOLCHAIN_FILE=src/platform/amiga/CMakeToolchain.txt \
-#     -DAMIGA_TOOLCHAIN_PREFIX=/opt/amiga ..
+#     -DAMIGA_TOOLCHAIN_PREFIX=/opt/m68k-amigaos-gcc-16.2 ..
 #
 # Target: 68060 or 68020+ (PiStorm/Emu68). Setting CMAKE_SYSTEM_NAME to
 # "Generic" makes the top-level CMakeLists.txt automatically force
@@ -15,7 +16,7 @@ if(DEFINED ENV{AMIGA_TOOLCHAIN_PREFIX} AND NOT DEFINED AMIGA_TOOLCHAIN_PREFIX)
 	set(AMIGA_TOOLCHAIN_PREFIX $ENV{AMIGA_TOOLCHAIN_PREFIX})
 endif()
 if(NOT DEFINED AMIGA_TOOLCHAIN_PREFIX)
-	set(AMIGA_TOOLCHAIN_PREFIX /opt/amiga)
+	set(AMIGA_TOOLCHAIN_PREFIX /opt/m68k-amigaos-gcc-16.2)
 endif()
 
 set(CMAKE_SYSTEM_NAME Generic CACHE INTERNAL "system name")
@@ -24,26 +25,35 @@ set(CMAKE_SYSTEM_PROCESSOR m68k CACHE INTERNAL "processor")
 set(CMAKE_C_COMPILER "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-gcc" CACHE INTERNAL "c compiler")
 set(CMAKE_CXX_COMPILER "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-g++" CACHE INTERNAL "cxx compiler")
 set(CMAKE_ASM_COMPILER "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-gcc" CACHE INTERNAL "assembler")
-# Plain (binutils) ar/ranlib, not the gcc- wrappers: this toolchain's
-# gcc-ar/gcc-ranlib are built without LTO plugin support and fail
-# unconditionally ("sorry - this program has been built without plugin
-# support"), even when nothing is actually using LTO.
 set(CMAKE_AR "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-ar" CACHE INTERNAL "archiver")
 set(CMAKE_RANLIB "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-ranlib" CACHE INTERNAL "ranlib")
 
 # -D__BIG_ENDIAN__ is required: this compiler is big-endian by default
 # (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__) but doesn't define the BSD-style
 # __BIG_ENDIAN__ macro that include/mgba-util/common.h checks for.
-# _GNU_SOURCE unlocks strdup/strndup/etc. in this (newlib-derived) libc's
-# string.h, which strict -std=c11 otherwise hides behind feature-test
-# macros -- same fix the Wii port applies for the same reason.
-# -mcrt=nix (libnix): the default (newlib) C runtime here doesn't implement
-# AmigaOS-backed mkdir/getcwd/gettimeofday/fstat/fsync/ftruncate etc.
-# clib2 would also fix this but isn't actually installed in this toolchain
-# build (no ncrt0.o under a clib2 path); libnix is. See
-# src/platform/amiga/startup.c for the __nocommandline control variable
-# libnix's crt0 requires.
-set(AMIGA_ARCH_FLAGS "-m68060 -mhard-float -mcrt=nix -D__BIG_ENDIAN__ -D_GNU_SOURCE" CACHE INTERNAL "arch flags")
+#
+# _GNU_SOURCE unlocks strdup/strndup/etc. in string.h, which strict
+# -std=c11 otherwise hides behind feature-test macros -- same fix the Wii
+# port applies for the same reason.
+#
+# -mcrt=newlib: on this specific toolchain build (GCC 16.2,
+# AmigaPorts/m68k-amigaos-gcc), newlib's AmigaOS backing is complete
+# (mkdir/getcwd/gettimeofday/fstat/dirent-with-d_type/getopt_long/full
+# newlocale family all verified present and linkable) -- unlike the much
+# older GCC 6.5.0b toolchain, where newlib lacked these and clib2/libnix
+# each had their own gaps (clib2: no newlocale family, no dirent d_type,
+# no getopt_long, plus a locale_t typedef conflict when mixed with
+# newlib's own headers under _GNU_SOURCE; libnix: resident-library
+# globals like __errno need separate wiring). newlib is also already
+# this toolchain's default when -mcrt= is omitted; naming it explicitly
+# just guards against that default ever changing.
+#
+# -fno-lto: on this (locally built, ad-hoc code-signed) macOS host,
+# liblto_plugin.so fails to dlopen under Gatekeeper/hardened runtime even
+# once the compiler/as/ld/collect2 binaries themselves have been approved,
+# since library code-signing is enforced differently from launching an
+# executable. Nothing here needs LTO; just avoid loading the plugin.
+set(AMIGA_ARCH_FLAGS "-m68060 -mhard-float -mcrt=newlib -fno-lto -D__BIG_ENDIAN__ -D_GNU_SOURCE" CACHE INTERNAL "arch flags")
 
 set(CMAKE_C_FLAGS "${AMIGA_ARCH_FLAGS}" CACHE INTERNAL "c compiler flags")
 set(CMAKE_CXX_FLAGS "${AMIGA_ARCH_FLAGS}" CACHE INTERNAL "cxx compiler flags")
@@ -64,31 +74,26 @@ set(AMIGA ON)
 add_definitions(-DAMIGA)
 
 # CMake's own compiler-sanity-check links a trivial test executable before
-# any of our targets (and their __nocommandline-providing startup.c) exist.
-# Restricting the initial probe to compiling only is the standard fix other
-# embedded/Generic toolchain files use for this.
+# any of our targets exist. Restricting the initial probe to compiling
+# only is the standard fix other embedded/Generic toolchain files use.
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 # find_function()'s detection (src/platform/cmake/FindFunction.cmake) relies
 # on -Wl,--require-defined try_compiles that don't reliably work for this
-# Generic cross target; strtof_l genuinely exists in libnix but is
-# misdetected as absent, causing a duplicate-definition link error against
-# src/util/formatting.c's own fallback. Force it on directly.
-add_definitions(-DHAVE_STRTOF_L)
-
-# crc32 misdetects true here (another name in libnix matches, unrelated to
-# zlib's crc32) which makes mgba-util/crc32.h try to #include <zlib.h>,
-# which we don't have wired up yet. Pre-seed the CheckFunctionExists cache
-# entry so find_function(crc32) skips its own (unreliable) probe.
-set(HAVE_CRC32 "" CACHE INTERNAL "")
-
-# strlcpy, popcount32: same story as strlcpy above -- the libnix
-# declaration inexplicably disappears from the preprocessed output once
-# -O3/-DNDEBUG/etc are added to the command line (root cause not
-# identified -- not a simple visibility macro, since the declaration is
-# unguarded in the header). Force these off so mgba supplies its own
-# portable fallback instead of depending on libnix's unreliable ones.
-# If more of these turn up, it's the same pattern.
-set(HAVE_STRLCPY "" CACHE INTERNAL "")
+# Generic cross target. popcount32, snprintf_l, crc32, futimens, futimes,
+# realpath all misdetect (true) under newlib/GCC 16.2 despite genuinely
+# being absent -- forced off below so mgba's own fallbacks are used
+# instead. If a similar misdetection resurfaces elsewhere, pre-seed the
+# cache the same way: set(HAVE_X "" CACHE INTERNAL "") to force off, or
+# add_definitions(-DHAVE_X) to force on.
+#
+# fsync/ftruncate have no HAVE_* guard upstream (called unconditionally
+# from src/util/vfs/vfs-fd.c) and are also absent from newlib on this
+# toolchain; see src/platform/amiga/startup.c for the shims that cover
+# those two instead.
 set(HAVE_POPCOUNT32 "" CACHE INTERNAL "")
 set(HAVE_SNPRINTF_L "" CACHE INTERNAL "")
+set(HAVE_CRC32 "" CACHE INTERNAL "")
+set(HAVE_FUTIMENS "" CACHE INTERNAL "")
+set(HAVE_FUTIMES "" CACHE INTERNAL "")
+set(HAVE_REALPATH "" CACHE INTERNAL "")

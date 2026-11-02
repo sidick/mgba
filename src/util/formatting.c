@@ -15,7 +15,7 @@ int ftostr_l(char* restrict str, size_t size, float f, locale_t locale) {
 	int res = snprintf(str, size, "%.*g", FLT_DIG, f);
 	uselocale(old);
 	return res;
-#elif defined(HAVE_SETLOCALE)
+#elif defined(HAVE_SETLOCALE) && !defined(HAVE_LOCALE_T)
 	char* old = setlocale(LC_NUMERIC, locale);
 	int res = snprintf(str, size, "%.*g", FLT_DIG, f);
 	setlocale(LC_NUMERIC, old);
@@ -33,7 +33,7 @@ float strtof_l(const char* restrict str, char** restrict end, locale_t locale) {
 	float res = strtof(str, end);
 	uselocale(old);
 	return res;
-#elif defined(HAVE_SETLOCALE)
+#elif defined(HAVE_SETLOCALE) && !defined(HAVE_LOCALE_T)
 	char* old = setlocale(LC_NUMERIC, locale);
 	float res = strtof(str, end);
 	setlocale(LC_NUMERIC, old);

@@ -1,23 +1,24 @@
-# Bebbo's m68k-amigaos-gcc toolchain (clib2) provides POSIX fd semantics
-# (open/read/write/lseek/close) on top of dos.library, so we can reuse the
-# same vfs-fd.c backend the Wii/3DS/posix ports use rather than writing a
-# native dos.library VFile backend.
-#
-# Directory listing (vfs-dirent.c) is NOT included: clib2's dirent.h is a
-# deliberate stub (#error "<dirent.h> not supported") on this toolchain.
-# Needed later for ROM browsing; will require a native dos.library
-# Examine()/ExNext()-based implementation, not the POSIX opendir() shim.
+# Bebbo's m68k-amigaos-gcc toolchain (clib2) provides POSIX fd and dirent
+# semantics (open/read/write/lseek/close, opendir/readdir/closedir) on top
+# of dos.library, so we can reuse the same vfs-fd.c/vfs-dirent.c backends
+# the Wii/3DS/posix ports use rather than writing a native dos.library
+# VFile backend. (The older newlib-derived toolchain's dirent.h was a
+# deliberate #error stub; clib2's is a real implementation.)
 list(APPEND OS_DEFINES ENABLE_VFS_FD COLOR_16_BIT COLOR_5_6_5)
 list(APPEND CORE_VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-fd.c)
+list(APPEND VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
 
-# libnix's crt0 (-mcrt=nix) requires the application to define
-# __nocommandline; PLATFORM_LIBRARY is a hook the top-level CMakeLists.txt
-# already links into every executable target (headless, docgen, etc.) but
-# that no other platform currently populates.
-add_library(mgba-amiga-startup STATIC startup.c)
-set(PLATFORM_LIBRARY mgba-amiga-startup PARENT_SCOPE)
+# startup.c supplies platform compat shims (see its own comments). It's
+# folded into OS_SRC (compiled directly into libmgba itself, like the
+# Windows/POSIX platforms' OS_SRC) rather than linked as a separate
+# PLATFORM_LIBRARY archive: PLATFORM_LIBRARY is linked *before* libmgba in
+# the top-level CMakeLists.txt's target_link_libraries() calls, so a
+# single-pass linker never goes back to pull symbols (e.g. cexpf) from it
+# once something inside libmgba.a turns out to need them.
+list(APPEND OS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/startup.c)
 
 set(OS_DEFINES ${OS_DEFINES} PARENT_SCOPE)
 set(CORE_VFS_SRC ${CORE_VFS_SRC} PARENT_SCOPE)
 set(VFS_SRC ${VFS_SRC} PARENT_SCOPE)
 set(OS_LIB ${OS_LIB} PARENT_SCOPE)
+set(OS_SRC ${OS_SRC} PARENT_SCOPE)

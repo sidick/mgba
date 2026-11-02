@@ -55,7 +55,7 @@ static bool _headlessCheckResiger(void);
 static struct mCore* core;
 
 static bool _dispatchExiting = false;
-static int _exitCode = 0;
+static int32_t _exitCode = 0;
 static struct mStandardLogger _logger;
 
 static void _headlessCallback(void* context);

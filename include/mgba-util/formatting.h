@@ -14,7 +14,12 @@ CXX_GUARD_START
 
 #ifdef HAVE_XLOCALE
 #include <xlocale.h>
-#elif !defined(HAVE_LOCALE)
+#elif !defined(HAVE_LOCALE) && !defined(HAVE_LOCALE_T)
+/* Some libcs (e.g. clib2) typedef a real locale_t in <locale.h> without
+ * implementing the newlocale/freelocale/uselocale family. HAVE_LOCALE_T
+ * lets such a platform skip this fallback (which would otherwise conflict
+ * with the libc's own typedef) while still taking the !HAVE_LOCALE path
+ * below for ftostr_u/strtof_u. */
 typedef const char* locale_t;
 #endif
 
