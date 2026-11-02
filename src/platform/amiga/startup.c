@@ -17,9 +17,24 @@
  * affine-transform helpers and silently lowers it to a cexpf() call
  * regardless of -fno-builtin-cexpf (verified: that flag doesn't suppress
  * this specific transform, only the blunt -fno-builtin does, which is too
- * broad to use globally). */
+ * broad to use globally).
+ *
+ * IMPORTANT: do not write this as expf(re) * (cosf(im) + I * sinf(im)).
+ * That calls cosf and sinf with the same argument, which is the exact
+ * pattern this optimizer rewrites into a call to cexpf -- including
+ * inside cexpf's own body, producing unconditional infinite recursion
+ * (confirmed via -S: the compiled body contained "jsr _cexpf" calling
+ * itself) and a stack overflow at runtime. __attribute__((no_builtin))
+ * is not recognized on this GCC backend. Computing sin(im) as
+ * cos(im - pi/2) avoids the pattern (no literal sinf() call) without
+ * disabling any optimization. */
 float complex cexpf(float complex z) {
-	return expf(crealf(z)) * (cosf(cimagf(z)) + I * sinf(cimagf(z)));
+	float re = crealf(z);
+	float im = cimagf(z);
+	float e = expf(re);
+	float c = cosf(im);
+	float s = cosf(im - (float) (M_PI / 2.0));
+	return e * c + e * s * I;
 }
 
 #include <sys/types.h>
@@ -47,10 +62,10 @@ extern int __maxfh;
 /* A no-op ftruncate() is NOT semantically safe here (unlike fsync): a
  * savestate/config file rewritten shorter than its previous contents
  * would retain old trailing bytes, corrupting whatever reads it back.
- * This was confirmed the hard way -- Pokemon Emerald's flash-save
- * detection at boot (which probes by writing, then reading back,
- * specific patterns) crashed under volamos with a no-op ftruncate here,
- * and ran correctly once this real implementation replaced it. */
+ * (Originally suspected, then ruled out, as the cause of a Pokemon
+ * Emerald crash under volamos -- that turned out to be the cexpf
+ * infinite-recursion bug above. This real implementation is still
+ * correct and necessary on its own merits.) */
 int ftruncate(int fd, long length) {
 	if (fd < 0 || fd >= __maxfh || !__fh[fd]) {
 		return -1;
