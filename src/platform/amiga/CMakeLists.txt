@@ -4,7 +4,9 @@
 # the Wii/3DS/posix ports use rather than writing a native dos.library
 # VFile backend. (The older newlib-derived toolchain's dirent.h was a
 # deliberate #error stub; clib2's is a real implementation.)
-list(APPEND OS_DEFINES ENABLE_VFS_FD COLOR_16_BIT COLOR_5_6_5)
+# IOAPI_NO_64: newlib doesn't implement fopen64/ftello64/fseeko64 (minizip's
+# FOPEN_FUNC falls back to plain fopen without this, same fix Wii applies).
+list(APPEND OS_DEFINES ENABLE_VFS_FD COLOR_16_BIT COLOR_5_6_5 IOAPI_NO_64)
 list(APPEND CORE_VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-fd.c)
 list(APPEND VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
 

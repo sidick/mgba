@@ -66,9 +66,21 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 # Without this, find_package(ZLIB)/find_package(PNG) happily pick up the
 # host macOS/Linux pkg-config entries instead of failing, which is worse
-# than just not finding them. Revisit once z.library/png16_lib stubs are
-# wired into AMIGA_TOOLCHAIN_PREFIX.
+# than just not finding them.
 set(PKG_CONFIG_EXECUTABLE "/dev/null" CACHE INTERNAL "" FORCE)
+
+# This toolchain ships prebuilt static zlib/libpng archives matching the
+# bundled headers -- simpler to link against directly than a shared
+# .library route (z.library/png16_lib), which can still be added later
+# if a smaller binary or a shared system copy becomes worth the extra
+# complexity. Pre-seed the exact variant matching our -m68060
+# -mhard-float flags (libm020/libm881) so find_package(ZLIB)/
+# find_package(PNG) (invoked via find_feature() in the top-level
+# CMakeLists.txt) use these instead of searching.
+set(ZLIB_INCLUDE_DIR "${AMIGA_TOOLCHAIN_PREFIX}/m68k-amigaos/include" CACHE PATH "")
+set(ZLIB_LIBRARY "${AMIGA_TOOLCHAIN_PREFIX}/m68k-amigaos/lib/libm020/libm881/libz.a" CACHE FILEPATH "")
+set(PNG_PNG_INCLUDE_DIR "${AMIGA_TOOLCHAIN_PREFIX}/m68k-amigaos/include" CACHE PATH "")
+set(PNG_LIBRARY "${AMIGA_TOOLCHAIN_PREFIX}/m68k-amigaos/lib/libm020/libm881/libpng.a" CACHE FILEPATH "")
 
 set(AMIGA ON)
 add_definitions(-DAMIGA)
