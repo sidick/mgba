@@ -29,21 +29,34 @@ float complex cexpf(float complex z) {
  *
  * fsync: a safe no-op -- AmigaOS's dos.library Write() isn't buffered in
  * a way that needs an additional explicit flush beyond what newlib's own
- * I/O layer already does.
- *
- * ftruncate: NOT semantically safe as a no-op (a real implementation
- * needs a dos.library SetFileSize() call against the fd's underlying
- * file handle) -- stubbed here only to reach a first working link; a
- * savestate/config file rewritten shorter than its previous contents
- * will currently retain the old trailing bytes. Needs real
- * implementation before relying on VFS writes that shrink a file. */
+ * I/O layer already does. */
 int fsync(int fd) {
 	(void) fd;
 	return 0;
 }
 
+#include <dos/dos.h>
+#include <proto/dos.h>
+
+/* newlib's own fd table (src/sys/amigaos/open.c): __fh[fd] is the BPTR
+ * dos.library file handle backing a given POSIX fd. Not declared in any
+ * public header, same as _WBenchMsg etc. */
+extern BPTR* __fh;
+extern int __maxfh;
+
+/* A no-op ftruncate() is NOT semantically safe here (unlike fsync): a
+ * savestate/config file rewritten shorter than its previous contents
+ * would retain old trailing bytes, corrupting whatever reads it back.
+ * This was confirmed the hard way -- Pokemon Emerald's flash-save
+ * detection at boot (which probes by writing, then reading back,
+ * specific patterns) crashed under volamos with a no-op ftruncate here,
+ * and ran correctly once this real implementation replaced it. */
 int ftruncate(int fd, long length) {
-	(void) fd;
-	(void) length;
+	if (fd < 0 || fd >= __maxfh || !__fh[fd]) {
+		return -1;
+	}
+	if (SetFileSize(__fh[fd], length, OFFSET_BEGINNING) < 0) {
+		return -1;
+	}
 	return 0;
 }
