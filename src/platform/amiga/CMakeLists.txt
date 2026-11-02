@@ -19,6 +19,24 @@ list(APPEND VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
 # once something inside libmgba.a turns out to need them.
 list(APPEND OS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/startup.c)
 
+# Belt-and-suspenders on top of startup.c's own cexpf rewrite (which
+# avoids the literal cosf(x)/sinf(x)-same-argument pattern GCC's
+# optimizer matches and replaces with a self-recursive call to cexpf --
+# see that file's comments, and the upstream GCC bug this was reported
+# as). No per-function pragma/attribute reliably suppresses this
+# ("optimize"/"no_builtin" either aren't accepted for -fno-builtin or
+# have no effect on this transform, tested); scoping the blunt
+# -fno-builtin to just this one small file via CMake, rather than
+# project-wide, is the only mechanism that reliably works regardless of
+# what pattern a future compiler version might additionally recognize.
+# Requires CMake 3.18+ for the DIRECTORY-qualified form (the only way to
+# make a child directory's source-file property visible to the
+# ${BINARY_NAME} target, which is created in the top-level
+# CMakeLists.txt, not here).
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/startup.c
+	DIRECTORY ${PROJECT_SOURCE_DIR}
+	PROPERTIES COMPILE_OPTIONS "-fno-builtin")
+
 set(OS_DEFINES ${OS_DEFINES} PARENT_SCOPE)
 set(CORE_VFS_SRC ${CORE_VFS_SRC} PARENT_SCOPE)
 set(VFS_SRC ${VFS_SRC} PARENT_SCOPE)
