@@ -34,6 +34,13 @@ static int s_requestedScale;
 static int s_blitX;
 static int s_blitY;
 static bool s_fullscreen;
+/* The currently-open fullscreen screen's own real mode geometry --
+ * persisted (not just a local in VideoRTGReopen()'s own fullscreen
+ * branch) so a later VideoRTGReopen() call can tell whether new content
+ * still fits the mode already open, without needing to reopen it. See
+ * that function's own "fast path" comment. */
+static unsigned s_screenWidth;
+static unsigned s_screenHeight;
 static int s_contentWidth = GBA_VIDEO_HORIZONTAL_PIXELS;
 static int s_contentHeight = GBA_VIDEO_VERTICAL_PIXELS;
 static uint32_t s_keys;
@@ -192,6 +199,65 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 }
 
 bool VideoRTGReopen(bool fullscreen, int scale) {
+	/* Remembered as the caller's own request, before any of the
+	 * resolving below -- see VideoRTGRequestedScale()'s own comment for
+	 * why this is tracked separately from s_scale/VideoRTGScale(). */
+	s_requestedScale = scale;
+
+	/* scale == 0 means "auto": fullscreen picks the largest integer fit
+	 * for the best available mode (resolved below); windowed has no
+	 * screen of its own to measure, so auto there just means the
+	 * previous fixed default of 1. */
+	bool autoScale = fullscreen && scale == 0;
+	if (scale < 1) {
+		scale = 1;
+	}
+
+	/* Fast path: reuse the already-open fullscreen screen instead of
+	 * closing and reopening it. Every content size this frontend
+	 * supports (GBA 240x160, GB 160x144, SGB-with-border 256x224) is
+	 * modest -- switching ROMs (possibly a different platform entirely)
+	 * or cycling 1x/2x/3x/Auto usually still fits whatever screen mode
+	 * is already open, so there's no real need to pay for a mode switch
+	 * (and its flicker) just to show different-sized content within the
+	 * same physical screen. "Auto" here means "best fit within the
+	 * screen already open", not a fresh re-enumeration of every mode --
+	 * the point of this path is specifically to avoid the reopen a full
+	 * re-enumeration could trigger, so it never considers switching to a
+	 * *different* (even if technically better) mode on its own. Only
+	 * falls through to the full reopen below when switching into/out of
+	 * fullscreen, opening for the first time, or when the requested
+	 * content truly doesn't fit the screen that's already open (e.g. an
+	 * explicit scale too large for it). */
+	if (fullscreen && s_fullscreen && s_screen && s_window) {
+		int reuseScale = autoScale ? ScaleBestFit(s_contentWidth, s_contentHeight, (int) s_screenWidth, (int) s_screenHeight) : scale;
+		unsigned scaledWidth = s_contentWidth * (unsigned) reuseScale;
+		unsigned scaledHeight = s_contentHeight * (unsigned) reuseScale;
+		if (scaledWidth <= s_screenWidth && scaledHeight <= s_screenHeight) {
+			free(s_scaledOutput);
+			s_scaledOutput = NULL;
+			s_scale = reuseScale;
+			if (s_scale > 1) {
+				s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
+				if (!s_scaledOutput) {
+					return false;
+				}
+			}
+			s_blitX = (int) ((s_screenWidth - scaledWidth) / 2);
+			s_blitY = (int) ((s_screenHeight - scaledHeight) / 2);
+			/* Re-fill the whole screen black, not just conditionally on
+			 * a margin existing this time -- the previous content's own
+			 * rect (a different size/position) may still have real
+			 * pixels anywhere the new, re-centered rect doesn't cover. */
+			p96RectFill(s_window->RPort, 0, 0, (LONG) s_screenWidth - 1, (LONG) s_screenHeight - 1, 0xFF000000);
+			/* ClearMenuStrip/mutate CHECKED/ResetMenuStrip, not a full
+			 * MenuDeinit()+MenuInit() -- the strip itself (and the
+			 * window it's attached to) isn't going anywhere. */
+			MenuSetScale(s_window, autoScale ? 0 : scale);
+			return true;
+		}
+	}
+
 	/* Tear down whatever window/screen/menu/scaled-output the previous
 	 * VideoRTGInit()/VideoRTGReopen() call made -- but not s_buffer/
 	 * s_swapped/P96Base, which outlive any number of reopens. Safe to
@@ -209,19 +275,6 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 	free(s_scaledOutput);
 	s_scaledOutput = NULL;
 
-	/* Remembered as the caller's own request, before any of the
-	 * resolving below -- see VideoRTGRequestedScale()'s own comment for
-	 * why this is tracked separately from s_scale/VideoRTGScale(). */
-	s_requestedScale = scale;
-
-	/* scale == 0 means "auto": fullscreen picks the largest integer fit
-	 * for the best available mode (resolved below); windowed has no
-	 * screen of its own to measure, so auto there just means the
-	 * previous fixed default of 1. */
-	bool autoScale = fullscreen && scale == 0;
-	if (scale < 1) {
-		scale = 1;
-	}
 	s_fullscreen = fullscreen;
 
 	if (fullscreen) {
@@ -262,21 +315,23 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 		 * our content centered within it (below) means that margin reads
 		 * as a deliberate black border around the picture rather than an
 		 * arbitrary unfilled corner. */
-		unsigned screenWidth = (unsigned) p96GetModeIDAttr(id, P96IDA_WIDTH);
-		unsigned screenHeight = (unsigned) p96GetModeIDAttr(id, P96IDA_HEIGHT);
-		if (screenWidth < scaledWidth) {
-			screenWidth = scaledWidth;
+		/* Persisted (not a local), so a later VideoRTGReopen() call can
+		 * check the fast path above against the screen actually open. */
+		s_screenWidth = (unsigned) p96GetModeIDAttr(id, P96IDA_WIDTH);
+		s_screenHeight = (unsigned) p96GetModeIDAttr(id, P96IDA_HEIGHT);
+		if (s_screenWidth < scaledWidth) {
+			s_screenWidth = scaledWidth;
 		}
-		if (screenHeight < scaledHeight) {
-			screenHeight = scaledHeight;
+		if (s_screenHeight < scaledHeight) {
+			s_screenHeight = scaledHeight;
 		}
-		s_blitX = (int) ((screenWidth - scaledWidth) / 2);
-		s_blitY = (int) ((screenHeight - scaledHeight) / 2);
+		s_blitX = (int) ((s_screenWidth - scaledWidth) / 2);
+		s_blitY = (int) ((s_screenHeight - scaledHeight) / 2);
 
 		s_screen = p96OpenScreenTags(
 			P96SA_DisplayID, id,
-			P96SA_Width, screenWidth,
-			P96SA_Height, screenHeight,
+			P96SA_Width, s_screenWidth,
+			P96SA_Height, s_screenHeight,
 			P96SA_Depth, 16,
 			P96SA_Title, (ULONG) "mGBA",
 			P96SA_Quiet, TRUE,
@@ -294,18 +349,20 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 			WA_Backdrop, TRUE,
 			WA_Borderless, TRUE,
 			WA_Activate, TRUE,
-			WA_Width, screenWidth,
-			WA_Height, screenHeight,
+			WA_Width, s_screenWidth,
+			WA_Height, s_screenHeight,
 			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK,
 			TAG_DONE);
 		if (s_window && (s_blitX > 0 || s_blitY > 0)) {
 			/* Plain black for now -- P96's own default background
 			 * otherwise shows through the margin left by a scale that
 			 * doesn't evenly fill the mode. A bevel/border here is a
-			 * natural follow-up, not done yet. Filled once: our own
+			 * natural follow-up, not done yet. Filled once here: our own
 			 * per-frame blit never touches anything outside the centered
-			 * content rect, so this never needs redrawing. */
-			p96RectFill(s_window->RPort, 0, 0, (LONG) screenWidth - 1, (LONG) screenHeight - 1, 0xFF000000);
+			 * content rect, so this never needs redrawing on its own --
+			 * the fast path above redoes it when the centered rect
+			 * itself moves/resizes without a full reopen. */
+			p96RectFill(s_window->RPort, 0, 0, (LONG) s_screenWidth - 1, (LONG) s_screenHeight - 1, 0xFF000000);
 		}
 	} else {
 		s_scale = scale;
