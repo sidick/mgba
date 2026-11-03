@@ -1,0 +1,16 @@
+/* Copyright (c) 2013-2025 Jeffrey Pfau
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* AmigaDOS "$VER:" tag (Style Guide ch. 8's "Embedded version ID") -- a
+ * plain ASCII marker embedded in the executable's own data so the Shell
+ * `Version`/`Version FULL` command, and Workbench's icon Information
+ * requester, can report this build's version without running it. The
+ * leading NUL keeps it out of a casual `type`/`strings` dump the same
+ * way every other Amiga dev tool's own version tag does; the `used`
+ * attribute keeps the linker from discarding it as dead data, since
+ * nothing else in this binary ever references the symbol itself --
+ * CMakeLists.txt generates this file from version.cmake's own
+ * LIB_VERSION_STRING, so it always matches mgba-amiga's real version. */
+const char __attribute__((used)) g_amigaVersionTag[] = "\0$VER: mgba-amiga ${LIB_VERSION_STRING} (${AMIGA_VER_DATE})";

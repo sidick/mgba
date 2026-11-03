@@ -1100,11 +1100,23 @@ if(DEFINED AMIGA)
 	target_link_libraries(${BINARY_NAME}-bench ${PLATFORM_LIBRARY} ${BINARY_NAME})
 	target_compile_definitions(${BINARY_NAME}-bench PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
 
+	# AmigaDOS "$VER:" tag (see version-tag.c.in's own comment) --
+	# configure_file() at CMake-configure time (not version.cmake's own
+	# separate build-time -P invocation that regenerates version.c on
+	# every build): LIB_VERSION_STRING/BINARY_NAME already came from the
+	# root CMakeLists.txt's own `include(version.cmake)` above, and a
+	# fixed version tag doesn't need to track a live git commit the same
+	# way version.c's richer fields do, so reconfiguring once per `cmake`
+	# run is enough.
+	string(TIMESTAMP AMIGA_VER_DATE "%d.%m.%Y" UTC)
+	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/version-tag.c.in ${CMAKE_CURRENT_BINARY_DIR}/amiga-version-tag.c)
+
 	# The real frontend: RTG-only for now (Picasso96API.library, detected at
 	# runtime). AGA is deferred until it's clear RTG alone isn't enough --
 	# see src/platform/amiga/video-rtg.c for the video path.
 	add_executable(${BINARY_NAME}-amiga
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/main.c
+		${CMAKE_CURRENT_BINARY_DIR}/amiga-version-tag.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/menu.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/debug-log.c
