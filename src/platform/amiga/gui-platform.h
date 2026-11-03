@@ -10,15 +10,28 @@
 
 /* Fills in every struct GUIParams field this platform provides
  * (drawStart/drawEnd/pollInput/pollCursor/batteryState/guiPrepare/
- * guiFinish/getText, width/height/font/basePath) and runner->keySources
- * -- everything mGUIInit()/gui-runner.c need from the platform side to
- * drive the shared ROM-browser/settings GUI on top of gui-font.c and
- * video-rtg.c's existing pixel buffer/blit pipeline.
+ * guiFinish/getText, width/height/font/basePath), runner->keySources,
+ * and the rest of the mGUIRunner callback set (setup/teardown/drawFrame/
+ * drawScreenshot/pollGameInput/running/incrementScreenMode;
+ * gameLoaded/gameUnloaded/prepareForFrame/paused/unpaused/
+ * setFrameLimiter are left NULL -- see this file's own .c comment on
+ * why) -- everything mGUIInit()/gui-runner.c need from the platform
+ * side to drive the shared ROM-browser/settings GUI and the in-game
+ * loop on top of gui-font.c and video-rtg.c's existing pixel buffer/
+ * blit pipeline.
  *
  * Must be called after VideoRTGInit() (binds GUIFontSetTarget() to its
  * buffer) and after mGUIInit() (binds default keys into the
  * already-initialized runner->params.keyMap; mGUIInit() itself calls
- * mInputMapInit() on it first). */
+ * mInputMapInit() on it first). Does NOT call runner->core->
+ * setVideoBuffer() itself -- that happens later, in the setup callback
+ * registered here, once runner->core actually exists (mGUIRun() creates
+ * it after this call, when a ROM is picked). */
 void AmigaGuiPlatformInit(struct mGUIRunner* runner);
+
+/* Frees what AmigaGuiPlatformInit() allocated (currently just
+ * runner->params.font) -- called from the registered teardown callback,
+ * not meant to be called directly except by that callback itself. */
+void AmigaGuiPlatformDeinit(struct mGUIRunner* runner);
 
 #endif

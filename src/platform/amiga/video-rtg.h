@@ -55,6 +55,16 @@ bool VideoRTGReopen(bool fullscreen, int scale);
  * VideoRTGReopen() and VideoRTGDeinit(). */
 struct Window* VideoRTGWindow(void);
 
+/* The fullscreen/scale this window/screen is currently open at -- the
+ * same values the most recent successful VideoRTGInit()/VideoRTGReopen()
+ * call resolved to (scale is never 0 here, even if that call was passed
+ * 0 for "auto": this reports the real, resolved scale). For a caller
+ * (e.g. gui-platform.c's incrementScreenMode) that wants to cycle scale
+ * without duplicating VideoRTGReopen()'s own fullscreen/auto-detect
+ * logic. */
+bool VideoRTGFullscreen(void);
+int VideoRTGScale(void);
+
 /* The menu action (see menu.h) picked since the last call, or
  * MENU_ACTION_NONE if none -- set by VideoRTGShouldQuit()'s IDCMP_MENUPICK
  * handling. Destructive read: calling this resets it to MENU_ACTION_NONE,

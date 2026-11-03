@@ -419,6 +419,14 @@ struct Window* VideoRTGWindow(void) {
 	return s_window;
 }
 
+bool VideoRTGFullscreen(void) {
+	return s_fullscreen;
+}
+
+int VideoRTGScale(void) {
+	return s_scale;
+}
+
 void VideoRTGDeinit(void) {
 	MenuDeinit(s_window);
 	if (s_window) {
