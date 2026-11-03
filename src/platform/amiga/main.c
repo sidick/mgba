@@ -122,6 +122,15 @@ static int _realMain(int argc, char** argv) {
 	mCoreConfigMap(&core->config, &opts);
 	mArgumentsApply(&args, NULL, 0, &core->config);
 	mCoreConfigLoadDefaults(&core->config, &opts);
+	/* Matches src/platform/test/perf-main.c's own default: "detect" finds
+	 * idle busy-wait loops in guest code at runtime, unlike the GBA core's
+	 * own built-in default ("remove"), which mostly needs a matching
+	 * per-game entry in mgba's override database to do anything -- our
+	 * homebrew/test ROMs have none. Doesn't touch BIOS-region execution
+	 * (GBASetActiveRegion in src/gba/memory.c explicitly excludes it), so
+	 * it won't help a ROM that waits via a real VBlankIntrWait() BIOS
+	 * call, only one that busy-polls memory directly instead. */
+	mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
 	mCoreLoadConfig(core);
 
 	core->reset(core);
