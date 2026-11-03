@@ -30,10 +30,20 @@ uint16_t* VideoRTGBuffer(void);
  * Call once per emulated frame, after core->runFrame(). */
 void VideoRTGBlit(void);
 
-/* Polls this window's IDCMP without blocking. Returns true if the user
- * closed the window (close gadget / fullscreen screen-close equivalent) and
- * the frontend should exit its main loop. */
+/* Polls this window's IDCMP without blocking: tracks IDCMP_RAWKEY press/
+ * release (see VideoRTGKeys() below) and returns true if the user closed
+ * the window (close gadget / fullscreen screen-close equivalent), in which
+ * case the frontend should exit its main loop. Call once per emulated
+ * frame, before VideoRTGKeys(). */
 bool VideoRTGShouldQuit(void);
+
+/* GBA_KEY_* (mgba/internal/gba/input.h) bitmask of currently-held buttons,
+ * built from this window's keyboard input by the most recent
+ * VideoRTGShouldQuit() call. Fullscreen mode has no close gadget, so this
+ * is currently the only way to drive the emulated machine -- there is no
+ * joystick/gamepad support yet (see src/platform/amiga/main.c's -F usage
+ * text for the key mapping). */
+uint32_t VideoRTGKeys(void);
 
 /* Closes the window/screen and the library. Safe to call even if
  * VideoRTGInit() returned false (cleans up whatever got opened so far). */

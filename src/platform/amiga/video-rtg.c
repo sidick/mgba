@@ -6,7 +6,9 @@
 #include "video-rtg.h"
 
 #include <mgba/gba/interface.h>
+#include <mgba/internal/gba/input.h>
 
+#include <devices/inputevent.h>
 #include <exec/types.h>
 #include <intuition/intuition.h>
 #include <libraries/Picasso96.h>
@@ -24,6 +26,30 @@ static struct Screen* s_screen;
 static struct Window* s_window;
 static uint16_t* s_buffer;
 static uint16_t* s_swapped;
+static uint32_t s_keys;
+
+/* Keyboard-only for now (no joystick/gamepad support yet -- see
+ * video-rtg.h's VideoRTGKeys() comment): raw key codes below are the
+ * standard Amiga keyboard scancodes (devices/rawkeycodes.h isn't shipped
+ * with this NDK install, hence the literals -- these are long-stable
+ * hardware values, not toolchain-specific). Mirrors mGBA's own desktop
+ * (Qt/SDL) default mapping: X/Z for A/B, A/S for L/R, Return/Backspace
+ * for Start/Select. */
+static int _mapRawKey(UWORD code) {
+	switch (code) {
+	case 0x4C: return GBA_KEY_UP;
+	case 0x4D: return GBA_KEY_DOWN;
+	case 0x4E: return GBA_KEY_RIGHT;
+	case 0x4F: return GBA_KEY_LEFT;
+	case 0x32: return GBA_KEY_A;      /* X */
+	case 0x31: return GBA_KEY_B;      /* Z */
+	case 0x20: return GBA_KEY_L;      /* A */
+	case 0x21: return GBA_KEY_R;      /* S */
+	case 0x44: return GBA_KEY_START;  /* Return */
+	case 0x41: return GBA_KEY_SELECT; /* Backspace */
+	default: return GBA_KEY_NONE;
+	}
+}
 
 /* mgba's mColor, built with COLOR_16_BIT + COLOR_5_6_5 (see
  * src/platform/amiga/CMakeLists.txt), is a plain uint16_t with (per
@@ -55,6 +81,7 @@ static void _blitSwapBytes(void) {
 }
 
 bool VideoRTGInit(bool fullscreen) {
+	s_keys = 0;
 	s_buffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	s_swapped = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	if (!s_buffer || !s_swapped) {
@@ -142,12 +169,32 @@ bool VideoRTGShouldQuit(void) {
 	bool quit = false;
 	struct IntuiMessage* msg;
 	while ((msg = (struct IntuiMessage*) GetMsg(s_window->UserPort))) {
-		if (msg->Class == IDCMP_CLOSEWINDOW) {
+		switch (msg->Class) {
+		case IDCMP_CLOSEWINDOW:
 			quit = true;
+			break;
+		case IDCMP_RAWKEY: {
+			/* High bit of Code marks a key release; the low 7 bits are
+			 * the same raw key number either way (devices/inputevent.h). */
+			bool keyUp = (msg->Code & IECODE_UP_PREFIX) != 0;
+			int key = _mapRawKey(msg->Code & ~IECODE_UP_PREFIX);
+			if (key != GBA_KEY_NONE) {
+				if (keyUp) {
+					s_keys &= ~(1U << key);
+				} else {
+					s_keys |= (1U << key);
+				}
+			}
+			break;
+		}
 		}
 		ReplyMsg((struct Message*) msg);
 	}
 	return quit;
+}
+
+uint32_t VideoRTGKeys(void) {
+	return s_keys;
 }
 
 void VideoRTGDeinit(void) {
