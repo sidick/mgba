@@ -1109,7 +1109,13 @@ if(DEFINED AMIGA)
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/menu.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/debug-log.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gamepad.c
-		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c)
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-platform.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-font.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font-metrics.c
+		${CMAKE_CURRENT_BINARY_DIR}/amiga-font-data.c
+		${CMAKE_CURRENT_BINARY_DIR}/amiga-icons-data.c)
 	target_link_libraries(${BINARY_NAME}-amiga ${PLATFORM_LIBRARY} ${BINARY_NAME})
 	target_compile_definitions(${BINARY_NAME}-amiga PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
 

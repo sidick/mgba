@@ -85,6 +85,26 @@ bool VideoRTGShouldQuit(void);
  * text for the key mapping). */
 uint32_t VideoRTGKeys(void);
 
+/* Bit positions VideoRTGGuiKeys() uses -- distinct from (and live at a
+ * different time than) GBA_KEY_*, since mgba's shared gui-runner.c
+ * ROM-browser/settings menu (see gui-platform.c) needs its own
+ * Up/Down/Left/Right/Select/Back/Cancel navigation vocabulary, not the
+ * in-game GBA button layout. */
+enum AmigaGuiKey {
+	AMIGA_GUI_KEY_UP = 0,
+	AMIGA_GUI_KEY_DOWN,
+	AMIGA_GUI_KEY_LEFT,
+	AMIGA_GUI_KEY_RIGHT,
+	AMIGA_GUI_KEY_SELECT,
+	AMIGA_GUI_KEY_BACK,
+	AMIGA_GUI_KEY_CANCEL,
+};
+
+/* AMIGA_GUI_KEY_* bitmask of currently-held menu-navigation keys, built
+ * from the same keyboard input VideoRTGKeys() uses, by the most recent
+ * VideoRTGShouldQuit() call. */
+uint32_t VideoRTGGuiKeys(void);
+
 /* Closes the window/screen and the library. Safe to call even if
  * VideoRTGInit() returned false (cleans up whatever got opened so far). */
 void VideoRTGDeinit(void);

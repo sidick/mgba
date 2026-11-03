@@ -34,6 +34,7 @@ static int s_blitX;
 static int s_blitY;
 static bool s_fullscreen;
 static uint32_t s_keys;
+static uint32_t s_guiKeys;
 static enum MenuAction s_menuAction;
 
 /* Keyboard-only for now (no joystick/gamepad support yet -- see
@@ -56,6 +57,21 @@ static int _mapRawKey(UWORD code) {
 	case 0x44: return GBA_KEY_START;  /* Return */
 	case 0x41: return GBA_KEY_SELECT; /* Backspace */
 	default: return GBA_KEY_NONE;
+	}
+}
+
+/* Bit positions are enum AmigaGuiKey (video-rtg.h), shared with
+ * gui-platform.c so it can bind the same symbolic constants. */
+static int _mapRawKeyGui(UWORD code) {
+	switch (code) {
+	case 0x4C: return AMIGA_GUI_KEY_UP;
+	case 0x4D: return AMIGA_GUI_KEY_DOWN;
+	case 0x4E: return AMIGA_GUI_KEY_RIGHT;
+	case 0x4F: return AMIGA_GUI_KEY_LEFT;
+	case 0x44: return AMIGA_GUI_KEY_SELECT; /* Return */
+	case 0x41: return AMIGA_GUI_KEY_BACK;   /* Backspace */
+	case 0x45: return AMIGA_GUI_KEY_CANCEL; /* Esc */
+	default: return -1;
 	}
 }
 
@@ -353,12 +369,21 @@ bool VideoRTGShouldQuit(void) {
 			/* High bit of Code marks a key release; the low 7 bits are
 			 * the same raw key number either way (devices/inputevent.h). */
 			bool keyUp = (msg->Code & IECODE_UP_PREFIX) != 0;
-			int key = _mapRawKey(msg->Code & ~IECODE_UP_PREFIX);
+			UWORD rawKey = msg->Code & ~IECODE_UP_PREFIX;
+			int key = _mapRawKey(rawKey);
 			if (key != GBA_KEY_NONE) {
 				if (keyUp) {
 					s_keys &= ~(1U << key);
 				} else {
 					s_keys |= (1U << key);
+				}
+			}
+			int guiKey = _mapRawKeyGui(rawKey);
+			if (guiKey >= 0) {
+				if (keyUp) {
+					s_guiKeys &= ~(1U << guiKey);
+				} else {
+					s_guiKeys |= (1U << guiKey);
 				}
 			}
 			break;
@@ -378,6 +403,10 @@ bool VideoRTGShouldQuit(void) {
 
 uint32_t VideoRTGKeys(void) {
 	return s_keys;
+}
+
+uint32_t VideoRTGGuiKeys(void) {
+	return s_guiKeys;
 }
 
 enum MenuAction VideoRTGMenuAction(void) {
