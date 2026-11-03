@@ -1099,6 +1099,15 @@ if(DEFINED AMIGA)
 	add_executable(${BINARY_NAME}-bench ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/bench-main.c)
 	target_link_libraries(${BINARY_NAME}-bench ${PLATFORM_LIBRARY} ${BINARY_NAME})
 	target_compile_definitions(${BINARY_NAME}-bench PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
+
+	# The real frontend: RTG-only for now (Picasso96API.library, detected at
+	# runtime). AGA is deferred until it's clear RTG alone isn't enough --
+	# see src/platform/amiga/video-rtg.c for the video path.
+	add_executable(${BINARY_NAME}-amiga
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/main.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c)
+	target_link_libraries(${BINARY_NAME}-amiga ${PLATFORM_LIBRARY} ${BINARY_NAME})
+	target_compile_definitions(${BINARY_NAME}-amiga PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
 endif()
 
 if(NOT USE_CMOCKA)
