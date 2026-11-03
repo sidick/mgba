@@ -162,6 +162,44 @@ static int _realMain(int argc, char** argv) {
 		if (quit) {
 			break;
 		}
+
+		enum MenuAction action = VideoRTGMenuAction();
+		switch (action) {
+		case MENU_ACTION_QUIT:
+			quit = true;
+			break;
+		case MENU_ACTION_OPEN_ROM: {
+			char* path = MenuOpenROM(VideoRTGWindow());
+			if (path) {
+				core->unloadROM(core);
+				mCoreLoadFile(core, path);
+				core->reset(core);
+				free(path);
+			}
+			break;
+		}
+		case MENU_ACTION_ABOUT:
+			MenuShowAbout(VideoRTGWindow());
+			break;
+		case MENU_ACTION_SCALE_1X:
+		case MENU_ACTION_SCALE_2X:
+		case MENU_ACTION_SCALE_3X:
+		case MENU_ACTION_SCALE_AUTO: {
+			/* 1x/2x/3x/Auto, in that enum order -- see menu.h. Auto maps
+			 * to scale 0, same meaning VideoRTGInit()'s own `scale`
+			 * parameter already gives it. */
+			static const int kScaleForAction[] = { 1, 2, 3, 0 };
+			int newScale = kScaleForAction[action - MENU_ACTION_SCALE_1X];
+			VideoRTGReopen(amigaOpts.fullscreen, newScale);
+			break;
+		}
+		default:
+			break;
+		}
+		if (quit) {
+			break;
+		}
+
 		core->setKeys(core, VideoRTGKeys() | GamepadKeys());
 		core->runFrame(core);
 		VideoRTGBlit();

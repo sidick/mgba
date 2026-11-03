@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "menu.h"
 #include "scale.h"
 #include "video-rtg.h"
 
@@ -31,7 +32,9 @@ static uint16_t* s_scaledOutput;
 static int s_scale;
 static int s_blitX;
 static int s_blitY;
+static bool s_fullscreen;
 static uint32_t s_keys;
+static enum MenuAction s_menuAction;
 
 /* Keyboard-only for now (no joystick/gamepad support yet -- see
  * video-rtg.h's VideoRTGKeys() comment): raw key codes below are the
@@ -127,16 +130,12 @@ static bool _pickAutoScaleMode(ULONG* outId, int* outScale) {
 }
 
 bool VideoRTGInit(bool fullscreen, int scale) {
-	/* scale == 0 means "auto": fullscreen picks the largest integer fit
-	 * for the best available mode (resolved below, once P96 is open);
-	 * windowed has no screen of its own to measure, so auto there just
-	 * means the previous fixed default of 1. */
-	bool autoScale = fullscreen && scale == 0;
-	if (scale < 1) {
-		scale = 1;
-	}
-
 	s_keys = 0;
+	/* Allocated once for the whole process lifetime, not torn down by
+	 * VideoRTGReopen() -- core->setVideoBuffer() is only ever called once
+	 * (see main.c), so a later live scale/mode change (the Settings menu)
+	 * must keep this same pointer valid, only reopening the window/screen
+	 * around it. */
 	s_buffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	s_swapped = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	if (!s_buffer || !s_swapped) {
@@ -147,6 +146,37 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 	if (!P96Base) {
 		return false;
 	}
+
+	return VideoRTGReopen(fullscreen, scale);
+}
+
+bool VideoRTGReopen(bool fullscreen, int scale) {
+	/* Tear down whatever window/screen/menu/scaled-output the previous
+	 * VideoRTGInit()/VideoRTGReopen() call made -- but not s_buffer/
+	 * s_swapped/P96Base, which outlive any number of reopens. Safe to
+	 * call when there's nothing open yet (VideoRTGInit()'s own first
+	 * call): every pointer here starts NULL. */
+	MenuDeinit(s_window);
+	if (s_window) {
+		CloseWindow(s_window);
+		s_window = NULL;
+	}
+	if (s_screen) {
+		p96CloseScreen(s_screen);
+		s_screen = NULL;
+	}
+	free(s_scaledOutput);
+	s_scaledOutput = NULL;
+
+	/* scale == 0 means "auto": fullscreen picks the largest integer fit
+	 * for the best available mode (resolved below); windowed has no
+	 * screen of its own to measure, so auto there just means the
+	 * previous fixed default of 1. */
+	bool autoScale = fullscreen && scale == 0;
+	if (scale < 1) {
+		scale = 1;
+	}
+	s_fullscreen = fullscreen;
 
 	if (fullscreen) {
 		ULONG id;
@@ -209,15 +239,18 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			return false;
 		}
 
+		/* No WA_RMBTrap: that flag steals the right mouse button as a
+		 * plain IDCMP_MOUSEBUTTONS event before Intuition's own menu-
+		 * pulldown handling ever sees it, breaking the Settings/Project
+		 * menu below outright. We don't use RMB for anything else. */
 		s_window = OpenWindowTags(NULL,
 			WA_CustomScreen, (ULONG) s_screen,
 			WA_Backdrop, TRUE,
 			WA_Borderless, TRUE,
 			WA_Activate, TRUE,
-			WA_RMBTrap, TRUE,
 			WA_Width, screenWidth,
 			WA_Height, screenHeight,
-			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
+			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK,
 			TAG_DONE);
 		if (s_window && (s_blitX > 0 || s_blitY > 0)) {
 			/* Plain black for now -- P96's own default background
@@ -253,11 +286,22 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			WA_DepthGadget, TRUE,
 			WA_CloseGadget, TRUE,
 			WA_Activate, TRUE,
-			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
+			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK,
 			TAG_DONE);
 	}
 
-	return s_window != NULL;
+	if (!s_window) {
+		return false;
+	}
+
+	/* Not fatal if this fails (missing/ancient gadtools.library): the
+	 * window still works, just without a menu. MenuInit()'s "currentScale"
+	 * is 0 for "Auto" specifically (not whatever numeric scale auto-detect
+	 * happened to resolve to, which may not even be one of the menu's
+	 * 1x/2x/3x options) -- windowed mode is never auto (see the comment
+	 * above), so `scale` there is already the right value either way. */
+	MenuInit(s_window, (fullscreen && autoScale) ? 0 : scale);
+	return true;
 }
 
 uint16_t* VideoRTGBuffer(void) {
@@ -319,6 +363,13 @@ bool VideoRTGShouldQuit(void) {
 			}
 			break;
 		}
+		case IDCMP_MENUPICK: {
+			enum MenuAction action = MenuDispatch(msg->Code);
+			if (action != MENU_ACTION_NONE) {
+				s_menuAction = action;
+			}
+			break;
+		}
 		}
 		ReplyMsg((struct Message*) msg);
 	}
@@ -329,7 +380,18 @@ uint32_t VideoRTGKeys(void) {
 	return s_keys;
 }
 
+enum MenuAction VideoRTGMenuAction(void) {
+	enum MenuAction action = s_menuAction;
+	s_menuAction = MENU_ACTION_NONE;
+	return action;
+}
+
+struct Window* VideoRTGWindow(void) {
+	return s_window;
+}
+
 void VideoRTGDeinit(void) {
+	MenuDeinit(s_window);
 	if (s_window) {
 		CloseWindow(s_window);
 		s_window = NULL;

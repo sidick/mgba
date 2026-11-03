@@ -9,6 +9,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "menu.h"
+
+struct Window;
+
 /* Stride of the buffer handed to core->setVideoBuffer(), in pixels. Padded
  * to 256 (not the native 240) to match the convention other mgba frontends
  * (3DS, PSP2) already use, and because it's a clean multiple of 32 -- useful
@@ -34,6 +38,29 @@
  * of our own to measure. Passing 1 behaves exactly as before scaling
  * existed (no scaling pass, no extra buffer). */
 bool VideoRTGInit(bool fullscreen, int scale);
+
+/* Tears down and reopens the window/screen (and the menu strip, see menu.h)
+ * at a new fullscreen/scale combination, same meaning as VideoRTGInit()'s own
+ * parameters -- but keeps the GBA core's pixel buffer (VideoRTGBuffer()) and
+ * Picasso96API.library handle alive, so the core's core->setVideoBuffer()
+ * pointer stays valid across a live scale/mode change from the Settings
+ * menu. VideoRTGInit() itself calls this once after its one-time setup, so
+ * callers never need to call both. Returns false on failure, same as
+ * VideoRTGInit(). */
+bool VideoRTGReopen(bool fullscreen, int scale);
+
+/* The window currently open (fullscreen or windowed) -- for passing to
+ * MenuOpenROM()/MenuShowAbout(), which need a window to anchor their
+ * requesters to. Never NULL between a successful VideoRTGInit()/
+ * VideoRTGReopen() and VideoRTGDeinit(). */
+struct Window* VideoRTGWindow(void);
+
+/* The menu action (see menu.h) picked since the last call, or
+ * MENU_ACTION_NONE if none -- set by VideoRTGShouldQuit()'s IDCMP_MENUPICK
+ * handling. Destructive read: calling this resets it to MENU_ACTION_NONE,
+ * so call it exactly once per poll and store the result if it's needed more
+ * than once. */
+enum MenuAction VideoRTGMenuAction(void);
 
 /* The buffer to pass to core->setVideoBuffer(core, buffer, AMIGA_VIDEO_STRIDE).
  * Owned by this module; valid between VideoRTGInit() and VideoRTGDeinit(). */
