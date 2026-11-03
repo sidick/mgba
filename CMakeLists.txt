@@ -1110,6 +1110,41 @@ if(DEFINED AMIGA)
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c)
 	target_link_libraries(${BINARY_NAME}-amiga ${PLATFORM_LIBRARY} ${BINARY_NAME})
 	target_compile_definitions(${BINARY_NAME}-amiga PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
+
+	# gui-font.c's assets (res/font-new.png, res/icons2x.png) baked into
+	# the executable as C arrays at build time -- see
+	# src/platform/amiga/bin2c.py's own header comment for why (no
+	# reliable objcopy-as-binary or devkitPro-style raw2c for this
+	# toolchain, and this way there's no loose asset file to install).
+	find_package(Python3 COMPONENTS Interpreter REQUIRED)
+	set(AMIGA_BIN2C ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/bin2c.py)
+
+	add_custom_command(
+		OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/amiga-font-data.c
+		COMMAND ${Python3_EXECUTABLE} ${AMIGA_BIN2C} ${PROJECT_SOURCE_DIR}/res/font-new.png g_amigaFontPng ${CMAKE_CURRENT_BINARY_DIR}/amiga-font-data.c
+		MAIN_DEPENDENCY ${PROJECT_SOURCE_DIR}/res/font-new.png
+		DEPENDS ${AMIGA_BIN2C})
+	add_custom_command(
+		OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/amiga-icons-data.c
+		COMMAND ${Python3_EXECUTABLE} ${AMIGA_BIN2C} ${PROJECT_SOURCE_DIR}/res/icons2x.png g_amigaIconsPng ${CMAKE_CURRENT_BINARY_DIR}/amiga-icons-data.c
+		MAIN_DEPENDENCY ${PROJECT_SOURCE_DIR}/res/icons2x.png
+		DEPENDS ${AMIGA_BIN2C})
+
+	# Standalone visual check for gui-font.c, not part of the real
+	# frontend yet -- see src/platform/amiga/gui-font-test-main.c's own
+	# header comment. Not linked against ${BINARY_NAME} (no GBA core
+	# needed), unlike mgba-amiga/-bench above.
+	add_executable(${BINARY_NAME}-amiga-gui-font-test
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-font-test-main.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-font.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font-metrics.c
+		${CMAKE_CURRENT_BINARY_DIR}/amiga-font-data.c
+		${CMAKE_CURRENT_BINARY_DIR}/amiga-icons-data.c)
+	target_link_libraries(${BINARY_NAME}-amiga-gui-font-test ${PLATFORM_LIBRARY} ${BINARY_NAME})
+	target_compile_definitions(${BINARY_NAME}-amiga-gui-font-test PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
 endif()
 
 if(NOT USE_CMOCKA)
