@@ -39,11 +39,13 @@ static uint16_t* s_swapped;
  * physical byte order PC format wants. Swapping each 16-bit value's bytes
  * before handing them to p96WritePixelArray converts between the two.
  *
- * This has been verified by careful bit-level derivation against the
- * documented format strings in libraries/Picasso96.h, NOT by looking at an
- * actual rendered pixel (no display to test against outside an emulator
- * with real video, e.g. Copperline). If colors come out swapped or
- * scrambled once there's something to look at, start here. */
+ * Verified correct, not just by bit-level derivation: booted under
+ * Copperline (AmigaOS 3.2.2, Z3660 RTG, 16-bit screen) running one of
+ * mgba's own cinema test ROMs (cinema/gba/obj/2d-wrap), the rendered
+ * window matched that test's golden reference
+ * (cinema/gba/obj/2d-wrap/baseline_0000.png) exactly -- same two
+ * white-left/green-right sprites, same positions, no channel swap or
+ * scrambling. */
 static void _blitSwapBytes(void) {
 	size_t i;
 	for (i = 0; i < AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS; ++i) {
