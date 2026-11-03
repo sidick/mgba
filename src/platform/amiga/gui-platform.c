@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "gui-platform.h"
 
+#include "audio-ahi.h"
 #include "gamepad.h"
 #include "gui-font-target.h"
 #include "scale.h"
@@ -220,6 +221,7 @@ static void _setup(struct mGUIRunner* runner) {
 	 * before reset() in its own sequence, so no extra ordering care is
 	 * needed here beyond that existing contract. */
 	runner->core->setVideoBuffer(runner->core, s_coreBuffer, AMIGA_VIDEO_STRIDE);
+	AmigaAudioBindCore(runner->core);
 }
 
 static void _drawFrame(struct mGUIRunner* runner, bool faded) {

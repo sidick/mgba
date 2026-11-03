@@ -1120,6 +1120,7 @@ if(DEFINED AMIGA)
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/menu.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/debug-log.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/audio-ahi.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gamepad.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-platform.c

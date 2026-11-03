@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "audio-ahi.h"
 #include "debug-log.h"
 #include "gamepad.h"
 #include "gui-platform.h"
@@ -49,8 +50,10 @@
 	"  Return / Backspace  Start / Select\n" \
 	"\n" \
 	"Project menu (Right-Amiga shortcuts): Open ROM.../RA-O, Reset/RA-R,\n" \
-	"Pause/RA-P, Quick Save/RA-S, Quick Load/RA-L, Screenshot, Quit/RA-Q.\n" \
-	"Settings menu: 1x/2x/3x/Auto scale, Toggle Fullscreen.\n" \
+	"Pause/RA-P, Mute/RA-M, Quick Save/RA-S, Quick Load/RA-L, Screenshot,\n" \
+	"Quit/RA-Q. Settings menu: 1x/2x/3x/Auto scale, Toggle Fullscreen.\n" \
+	"Audio output (if any) goes wherever ahi.device is configured to --\n" \
+	"see SYS:Prefs/AHI to pick a different driver/card.\n" \
 	"\n" \
 	"Keyboard mapping (ROM browser/settings GUI, and its in-game pause menu):\n" \
 	"  Cursor keys      Navigate\n" \
@@ -180,6 +183,7 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 		core->unloadROM(core);
 		mCoreLoadFile(core, path);
 		_bindVideoBuffer(core);
+		AmigaAudioBindCore(core);
 		core->reset(core);
 		_sizeForCore(core, fullscreen, scale);
 		return true;
@@ -202,6 +206,7 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 	core->init(core);
 	mCoreLoadFile(core, path);
 	_bindVideoBuffer(core);
+	AmigaAudioBindCore(core);
 	mCoreConfigInit(&core->config, "amiga");
 	mCoreConfigLoad(&core->config);
 
@@ -306,6 +311,7 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 	romPath[sizeof(romPath) - 1] = '\0';
 
 	bool paused = false;
+	bool muted = false;
 	bool quit = false;
 	while (!quit) {
 		quit = VideoRTGShouldQuit();
@@ -340,7 +346,7 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 					/* A fresh ROM is never paused, regardless of whatever
 					 * state the previous one was left in. */
 					paused = false;
-					MenuSetPaused(VideoRTGWindow(), false);
+					MenuSetChecked(VideoRTGWindow(), MENU_ACTION_PAUSE, false);
 				}
 				free(path);
 			}
@@ -354,7 +360,12 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 			break;
 		case MENU_ACTION_PAUSE:
 			paused = !paused;
-			MenuSetPaused(VideoRTGWindow(), paused);
+			MenuSetChecked(VideoRTGWindow(), MENU_ACTION_PAUSE, paused);
+			break;
+		case MENU_ACTION_MUTE:
+			muted = !muted;
+			AmigaAudioSetMuted(muted);
+			MenuSetChecked(VideoRTGWindow(), MENU_ACTION_MUTE, muted);
 			break;
 		case MENU_ACTION_QUICK_SAVE:
 			_quickSave(core, romPath);
@@ -476,9 +487,15 @@ static int _realMain(int argc, char** argv) {
 	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
 	 * input alone is still a fully working frontend. */
 	GamepadInit();
+	/* Likewise not fatal if ahi.device isn't installed -- a silent
+	 * emulator still emulates. Must run before _runDirect()/_runBrowser()
+	 * load any core, since AmigaAudioBindCore() (called from both) is a
+	 * no-op without this having succeeded first. */
+	AmigaAudioInit();
 
 	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen, amigaOpts.scale) : _runBrowser();
 
+	AmigaAudioDeinit();
 	GamepadDeinit();
 	VideoRTGDeinit();
 	mArgumentsDeinit(&args);

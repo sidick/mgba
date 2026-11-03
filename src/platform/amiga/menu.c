@@ -45,10 +45,11 @@ static struct NewMenu s_menuDef[] = {
 	{ NM_ITEM,  (CONST_STRPTR) "Open ROM...",      (CONST_STRPTR) "O", COMMSEQ,   0,  USERDATA(MENU_ACTION_OPEN_ROM) },
 	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
 	{ NM_ITEM,  (CONST_STRPTR) "Reset",            (CONST_STRPTR) "R", COMMSEQ,   0,  USERDATA(MENU_ACTION_RESET) },
-	/* Pause is a plain independent toggle (CHECKIT, no nm_MutualExclude
-	 * bits set) -- not part of the scale group below, which is a
-	 * mutually-exclusive set. */
+	/* Pause and Mute are plain independent toggles (CHECKIT, no
+	 * nm_MutualExclude bits set) -- not part of the scale group below,
+	 * which is a mutually-exclusive set. */
 	{ NM_ITEM,  (CONST_STRPTR) "Pause",            (CONST_STRPTR) "P", COMMSEQ | CHECKIT, 0, USERDATA(MENU_ACTION_PAUSE) },
+	{ NM_ITEM,  (CONST_STRPTR) "Mute",             (CONST_STRPTR) "M", COMMSEQ | CHECKIT, 0, USERDATA(MENU_ACTION_MUTE) },
 	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
 	{ NM_ITEM,  (CONST_STRPTR) "Quick Save",       (CONST_STRPTR) "S", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUICK_SAVE) },
 	{ NM_ITEM,  (CONST_STRPTR) "Quick Load",       (CONST_STRPTR) "L", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUICK_LOAD) },
@@ -69,7 +70,7 @@ static struct NewMenu s_menuDef[] = {
 
 /* Index of "1x" in s_menuDef above -- MenuInit()'s own pre-selection
  * loop needs this; keep in sync with the array if its layout changes. */
-#define SCALE_ITEM_FIRST 14
+#define SCALE_ITEM_FIRST 15
 
 static int _scaleToIndex(int scale) {
 	switch (scale) {
@@ -184,18 +185,18 @@ void MenuSetScale(struct Window* window, int scale) {
 	ResetMenuStrip(window, s_menuStrip);
 }
 
-void MenuSetPaused(struct Window* window, bool paused) {
+void MenuSetChecked(struct Window* window, enum MenuAction action, bool checked) {
 	if (!s_menuStrip) {
 		return;
 	}
 
-	struct MenuItem* item = _findItemByAction(MENU_ACTION_PAUSE);
+	struct MenuItem* item = _findItemByAction(action);
 	if (!item) {
 		return;
 	}
 
 	ClearMenuStrip(window);
-	if (paused) {
+	if (checked) {
 		item->Flags |= CHECKED;
 	} else {
 		item->Flags &= ~CHECKED;
