@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "debug-log.h"
 #include "gamepad.h"
 #include "video-rtg.h"
 
@@ -11,7 +12,6 @@
 #include <mgba/core/log.h>
 #include <mgba/feature/commandline.h>
 
-#include <stdio.h>
 #include <stdlib.h>
 
 #include <dos/dostags.h>
@@ -77,17 +77,17 @@ static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* a
  * fine on a desktop, but a ROM that trips a WARN-level message in a tight
  * loop (e.g. a byte-at-a-time OAM clear, each byte logging its own
  * "Cannot Store8 to OAM") can emit hundreds of lines in the time it'd take
- * to render a handful of frames. Worse over this frontend's console/SER:
- * redirect, which is far slower than a desktop terminal. A standard logger
- * filtered down to FATAL+ERROR keeps real problems visible without that
- * cost. */
-static struct mStandardLogger s_logger;
+ * to render a handful of frames. AmigaDebugLoggerInit() (debug-log.h)
+ * filters down to FATAL+ERROR same as mStandardLogger would, but routes
+ * through Copperline's uaelib debug-log trap instead of stdout -- so this
+ * frontend's own diagnostics never need serial.device, leaving it free
+ * for something else that wants exclusive use of it (e.g. a wire client
+ * such as AmiPilotServer SERIAL). */
+static struct mLogger* s_logger;
 
 static int _realMain(int argc, char** argv) {
-	mStandardLoggerInit(&s_logger);
-	s_logger.logToStdout = true;
-	s_logger.d.filter->defaultLevels = mLOG_FATAL | mLOG_ERROR;
-	mLogSetDefaultLogger(&s_logger.d);
+	s_logger = AmigaDebugLoggerInit();
+	mLogSetDefaultLogger(s_logger);
 
 	struct AmigaOpts amigaOpts = { false, 0 };
 	struct mSubParser subparser = {
@@ -114,7 +114,7 @@ static int _realMain(int argc, char** argv) {
 	}
 
 	if (!VideoRTGInit(amigaOpts.fullscreen, amigaOpts.scale)) {
-		fprintf(stderr, "Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
+		AmigaDebugLogf("Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
 		VideoRTGDeinit();
 		mArgumentsDeinit(&args);
 		return 1;
@@ -126,7 +126,7 @@ static int _realMain(int argc, char** argv) {
 
 	struct mCore* core = mCoreFind(args.fname);
 	if (!core) {
-		fprintf(stderr, "Could not find a core to run %s\n", args.fname);
+		AmigaDebugLogf("Could not find a core to run %s\n", args.fname);
 		GamepadDeinit();
 		VideoRTGDeinit();
 		mArgumentsDeinit(&args);
@@ -214,7 +214,7 @@ static int _realMain(int argc, char** argv) {
 	VideoRTGDeinit();
 	mArgumentsDeinit(&args);
 	mLogSetDefaultLogger(NULL);
-	mStandardLoggerDeinit(&s_logger);
+	AmigaDebugLoggerDeinit(s_logger);
 	return 0;
 }
 
@@ -263,7 +263,7 @@ int main(int argc, char** argv) {
 	s_relaunchParent = self;
 	s_relaunchDoneSignal = AllocSignal(-1);
 	if (s_relaunchDoneSignal == (UBYTE) -1) {
-		fprintf(stderr, "Warning: only %lu bytes of stack and no signal free to relaunch with more; running as-is.\n", stackSize);
+		AmigaDebugLogf("Warning: only %lu bytes of stack and no signal free to relaunch with more; running as-is.\n", stackSize);
 		return _realMain(argc, argv);
 	}
 
@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
 		TAG_DONE);
 	if (!child) {
 		FreeSignal(s_relaunchDoneSignal);
-		fprintf(stderr, "Warning: only %lu bytes of stack and could not relaunch with more; running as-is.\n", stackSize);
+		AmigaDebugLogf("Warning: only %lu bytes of stack and could not relaunch with more; running as-is.\n", stackSize);
 		return _realMain(argc, argv);
 	}
 
