@@ -5,7 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "debug-log.h"
 #include "gamepad.h"
+#include "gui-platform.h"
 #include "video-rtg.h"
+
+#include "feature/gui/gui-runner.h"
 
 #include <mgba/core/config.h>
 #include <mgba/core/core.h>
@@ -19,12 +22,16 @@
 #include <proto/dos.h>
 #include <proto/exec.h>
 
-/* The only way to quit right now is the window's close gadget (windowed
- * mode) or Ctrl-C from a shell (fullscreen has no close gadget of its own
- * yet). */
+/* ROM is now optional on the command line (see _runBrowser()): without
+ * one, mgba's shared ROM-browser/settings GUI opens instead. Quit is
+ * reachable either way -- the native Project menu's "Quit mGBA" (both
+ * modes) or the ROM browser's own menu, as well as the window's close
+ * gadget in windowed mode. */
 #define AMIGA_OPTIONS "FS:"
 #define AMIGA_USAGE \
 	"Amiga frontend options:\n" \
+	"  ROM              Optional. Without one, opens mgba's ROM browser/\n" \
+	"                   settings GUI instead of loading a specific ROM.\n" \
 	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window\n" \
 	"  -S SCALE         Integer pixel-doubling scale. Fullscreen (-F) default:\n" \
 	"                   auto -- picks the largest scale that fits the best\n" \
@@ -33,11 +40,17 @@
 	"                   the window/screen at exactly that multiple of GBA\n" \
 	"                   resolution either way, with no further auto-fit.\n" \
 	"\n" \
-	"Keyboard mapping:\n" \
+	"Keyboard mapping (loading a ROM directly):\n" \
 	"  Cursor keys      D-pad\n" \
 	"  X / Z            A / B\n" \
 	"  A / S            L / R\n" \
 	"  Return / Backspace  Start / Select\n" \
+	"\n" \
+	"Keyboard mapping (ROM browser/settings GUI, and its in-game pause menu):\n" \
+	"  Cursor keys      Navigate\n" \
+	"  Return           Select\n" \
+	"  Backspace        Back (up a directory)\n" \
+	"  Esc              Cancel / pause\n" \
 	"\n" \
 	"A joystick/CD32 pad/USB gamepad (via Poseidon) on the port printed\n" \
 	"\"2\" is read too -- see src/platform/amiga/gamepad.c for the mapping."
@@ -85,63 +98,27 @@ static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* a
  * such as AmiPilotServer SERIAL). */
 static struct mLogger* s_logger;
 
-static int _realMain(int argc, char** argv) {
-	s_logger = AmigaDebugLoggerInit();
-	mLogSetDefaultLogger(s_logger);
-
-	struct AmigaOpts amigaOpts = { false, 0 };
-	struct mSubParser subparser = {
-		.usage = AMIGA_USAGE,
-		.parse = _parseAmigaOpts,
-		.extraOptions = AMIGA_OPTIONS,
-		.opts = &amigaOpts
-	};
-
-	struct mArguments args = {};
-	bool parsed = mArgumentsParse(&args, argc, argv, &subparser, 1);
-	if (!args.fname) {
-		parsed = false;
-	}
-	if (!parsed || args.showHelp) {
-		usage(argv[0], NULL, NULL, &subparser, 1);
-		mArgumentsDeinit(&args);
-		return !parsed;
-	}
-	if (args.showVersion) {
-		version(argv[0]);
-		mArgumentsDeinit(&args);
-		return 0;
-	}
-
-	if (!VideoRTGInit(amigaOpts.fullscreen, amigaOpts.scale)) {
-		AmigaDebugLogf("Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
-		VideoRTGDeinit();
-		mArgumentsDeinit(&args);
-		return 1;
-	}
-
-	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
-	 * input alone is still a fully working frontend. */
-	GamepadInit();
-
-	struct mCore* core = mCoreFind(args.fname);
+/* The original (and still default, when a ROM path is given on the
+ * command line) frontend: load exactly that ROM and run it, with the
+ * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
+ * About/scale -- no on-screen GUI at all. Unchanged by the addition of
+ * _runBrowser() below. */
+static int _runDirect(struct mArguments* args, bool fullscreen) {
+	struct mCore* core = mCoreFind(args->fname);
 	if (!core) {
-		AmigaDebugLogf("Could not find a core to run %s\n", args.fname);
-		GamepadDeinit();
-		VideoRTGDeinit();
-		mArgumentsDeinit(&args);
+		AmigaDebugLogf("Could not find a core to run %s\n", args->fname);
 		return 1;
 	}
 
 	core->init(core);
 	core->setVideoBuffer(core, VideoRTGBuffer(), AMIGA_VIDEO_STRIDE);
-	mCoreLoadFile(core, args.fname);
+	mCoreLoadFile(core, args->fname);
 	mCoreConfigInit(&core->config, "amiga");
 	mCoreConfigLoad(&core->config);
 
 	struct mCoreOptions opts = {};
 	mCoreConfigMap(&core->config, &opts);
-	mArgumentsApply(&args, NULL, 0, &core->config);
+	mArgumentsApply(args, NULL, 0, &core->config);
 	mCoreConfigLoadDefaults(&core->config, &opts);
 	/* Matches src/platform/test/perf-main.c's own default: "detect" finds
 	 * idle busy-wait loops in guest code at runtime, unlike the GBA core's
@@ -190,7 +167,7 @@ static int _realMain(int argc, char** argv) {
 			 * parameter already gives it. */
 			static const int kScaleForAction[] = { 1, 2, 3, 0 };
 			int newScale = kScaleForAction[action - MENU_ACTION_SCALE_1X];
-			VideoRTGReopen(amigaOpts.fullscreen, newScale);
+			VideoRTGReopen(fullscreen, newScale);
 			break;
 		}
 		default:
@@ -209,13 +186,70 @@ static int _realMain(int argc, char** argv) {
 	mCoreConfigDeinit(&core->config);
 	core->unloadROM(core);
 	core->deinit(core);
+	return 0;
+}
+
+/* No ROM path given on the command line: mgba's shared ROM-browser/
+ * settings GUI (src/feature/gui/gui-runner.c, the same one 3DS/PSP2/
+ * Switch/Wii use) instead of failing outright. "amiga" as the config
+ * port name matches _runDirect()'s own mCoreConfigInit() call above --
+ * both paths share one settings/key-binding namespace. */
+static int _runBrowser(void) {
+	struct mGUIRunner runner = {0};
+	mGUIInit(&runner, "amiga");
+	AmigaGuiPlatformInit(&runner);
+	mGUIRunloop(&runner);
+	mGUIDeinit(&runner);
+	return 0;
+}
+
+static int _realMain(int argc, char** argv) {
+	s_logger = AmigaDebugLoggerInit();
+	mLogSetDefaultLogger(s_logger);
+
+	struct AmigaOpts amigaOpts = { false, 0 };
+	struct mSubParser subparser = {
+		.usage = AMIGA_USAGE,
+		.parse = _parseAmigaOpts,
+		.extraOptions = AMIGA_OPTIONS,
+		.opts = &amigaOpts
+	};
+
+	/* No args.fname check here, unlike before: a ROM path is now
+	 * optional -- without one, _runBrowser() below opens the ROM
+	 * browser instead of _runDirect() loading it straight away. */
+	struct mArguments args = {};
+	bool parsed = mArgumentsParse(&args, argc, argv, &subparser, 1);
+	if (!parsed || args.showHelp) {
+		usage(argv[0], NULL, NULL, &subparser, 1);
+		mArgumentsDeinit(&args);
+		return !parsed;
+	}
+	if (args.showVersion) {
+		version(argv[0]);
+		mArgumentsDeinit(&args);
+		return 0;
+	}
+
+	if (!VideoRTGInit(amigaOpts.fullscreen, amigaOpts.scale)) {
+		AmigaDebugLogf("Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
+		VideoRTGDeinit();
+		mArgumentsDeinit(&args);
+		return 1;
+	}
+
+	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
+	 * input alone is still a fully working frontend. */
+	GamepadInit();
+
+	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen) : _runBrowser();
 
 	GamepadDeinit();
 	VideoRTGDeinit();
 	mArgumentsDeinit(&args);
 	mLogSetDefaultLogger(NULL);
 	AmigaDebugLoggerDeinit(s_logger);
-	return 0;
+	return result;
 }
 
 /* AmigaDOS gives a CLI-launched process a 4000-byte default stack

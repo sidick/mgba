@@ -80,6 +80,17 @@ uint16_t* VideoRTGBuffer(void);
  * Call once per emulated frame, after core->runFrame(). */
 void VideoRTGBlit(void);
 
+/* Like VideoRTGBlit(), but for an arbitrary logical canvas instead of
+ * VideoRTGBuffer() -- gui-platform.c's own GUI canvas, a fixed size
+ * unrelated to GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS (see that file's own
+ * comment on why the menu needs a canvas bigger than the GBA's native
+ * resolution). `canvas` is `canvasWidth` x `canvasHeight` plain mColor
+ * values, tightly packed (`canvasWidth` itself is the stride) -- scaled
+ * with ScaleNearestFit() (scale.h) to fit whatever content size
+ * VideoRTGReopen() last resolved, not necessarily an integer multiple of
+ * the canvas the way VideoRTGBlit()'s own gameplay path always is. */
+void VideoRTGBlitCanvas(const uint16_t* canvas, int canvasWidth, int canvasHeight);
+
 /* Polls this window's IDCMP without blocking: tracks IDCMP_RAWKEY press/
  * release (see VideoRTGKeys() below) and returns true if the user closed
  * the window (close gadget / fullscreen screen-close equivalent), in which

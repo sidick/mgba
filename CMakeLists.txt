@@ -1112,8 +1112,15 @@ if(DEFINED AMIGA)
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/scale.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-platform.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gui-font.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font.c
 		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/font-metrics.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/menu.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/util/gui/file-select.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/feature/gui/gui-runner.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/feature/gui/remap.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/feature/gui/cheats.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/feature/gui/gui-config.c
 		${CMAKE_CURRENT_BINARY_DIR}/amiga-font-data.c
 		${CMAKE_CURRENT_BINARY_DIR}/amiga-icons-data.c)
 	target_link_libraries(${BINARY_NAME}-amiga ${PLATFORM_LIBRARY} ${BINARY_NAME})

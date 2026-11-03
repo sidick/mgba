@@ -23,6 +23,18 @@
  * scale 1 and blit `src` directly instead. */
 void ScaleNearest(const uint16_t* src, int srcStride, int w, int h, uint16_t* dst, int dstStride, int scale);
 
+/* Same nearest-neighbor policy as ScaleNearest() above, but for an
+ * arbitrary (possibly non-integer, possibly downscaling) destination
+ * size -- gui-platform.c's own logical canvas (fixed at 2x GBA
+ * resolution) needs to fit whatever window/screen content size
+ * VideoRTGReopen() resolved to, which won't always be an exact integer
+ * multiple of that canvas. Per-axis ratio sampling (`srcX = dstX * srcW
+ * / dstW`), the same technique gui-font.c's own icon scaling already
+ * uses. `src` is `srcW` x `srcH`, `srcStride` pixels per row; `dst` is
+ * `dstW` x `dstH`, `dstStride` pixels per row (dstStride must be >=
+ * dstW). */
+void ScaleNearestFit(const uint16_t* src, int srcStride, int srcW, int srcH, uint16_t* dst, int dstStride, int dstW, int dstH);
+
 /* Largest integer scale of (w x h) that still fits within
  * (targetW x targetH), clamped to a minimum of 1 (never downscale --
  * a mode too small for even 1x is the caller's problem to reject

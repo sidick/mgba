@@ -37,6 +37,18 @@ static uint32_t s_keys;
 static uint32_t s_guiKeys;
 static enum MenuAction s_menuAction;
 
+/* VideoRTGBlitCanvas()'s own scratch buffers (gui-platform.c's logical
+ * canvas, a fixed size unrelated to GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS
+ * -- see that function's own comment) -- allocated lazily on first use,
+ * grown (never shrunk) if a caller ever asks for a larger canvas than
+ * before. Not performance-critical the way the gameplay blit is (GUI
+ * redraws, not 60fps-every-frame gameplay), so no need to pre-size these
+ * at VideoRTGInit() the way s_buffer/s_swapped are. */
+static uint16_t* s_canvasSwapped;
+static int s_canvasSwappedCapacity;
+static uint16_t* s_canvasScaledOutput;
+static int s_canvasScaledCapacity;
+
 /* Keyboard-only for now (no joystick/gamepad support yet -- see
  * video-rtg.h's VideoRTGKeys() comment): raw key codes below are the
  * standard Amiga keyboard scancodes (devices/rawkeycodes.h isn't shipped
@@ -354,6 +366,57 @@ void VideoRTGBlit(void) {
 	}
 }
 
+void VideoRTGBlitCanvas(const uint16_t* canvas, int canvasWidth, int canvasHeight) {
+	if (!s_window) {
+		return;
+	}
+
+	size_t canvasPixels = (size_t) canvasWidth * canvasHeight;
+	if (s_canvasSwappedCapacity < (int) canvasPixels) {
+		free(s_canvasSwapped);
+		s_canvasSwapped = malloc(canvasPixels * sizeof(uint16_t));
+		s_canvasSwappedCapacity = s_canvasSwapped ? (int) canvasPixels : 0;
+	}
+	if (!s_canvasSwapped) {
+		return;
+	}
+	size_t i;
+	for (i = 0; i < canvasPixels; ++i) {
+		uint16_t v = canvas[i];
+		s_canvasSwapped[i] = (uint16_t) ((v >> 8) | (v << 8));
+	}
+
+	/* Fit the canvas to whatever content size VideoRTGReopen() last
+	 * resolved for gameplay (GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS *
+	 * s_scale) -- not necessarily an integer multiple of canvasWidth/
+	 * canvasHeight, unlike VideoRTGBlit()'s own ScaleNearest() path, so
+	 * ScaleNearestFit()'s per-axis ratio sampling is needed here instead.
+	 * Reuses s_blitX/s_blitY, so a centered fullscreen picture centers
+	 * the GUI canvas the same way. */
+	unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
+	unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+
+	size_t outPixels = (size_t) scaledWidth * scaledHeight;
+	if (s_canvasScaledCapacity < (int) outPixels) {
+		free(s_canvasScaledOutput);
+		s_canvasScaledOutput = malloc(outPixels * sizeof(uint16_t));
+		s_canvasScaledCapacity = s_canvasScaledOutput ? (int) outPixels : 0;
+	}
+	if (!s_canvasScaledOutput) {
+		return;
+	}
+
+	ScaleNearestFit(s_canvasSwapped, canvasWidth, canvasWidth, canvasHeight,
+		s_canvasScaledOutput, (int) scaledWidth, (int) scaledWidth, (int) scaledHeight);
+
+	struct RenderInfo ri;
+	ri.RGBFormat = RGBFB_B5G6R5PC;
+	ri.Memory = s_canvasScaledOutput;
+	ri.BytesPerRow = scaledWidth * sizeof(uint16_t);
+	p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft + s_blitX, s_window->BorderTop + s_blitY,
+		scaledWidth, scaledHeight);
+}
+
 bool VideoRTGShouldQuit(void) {
 	if (!s_window) {
 		return true;
@@ -445,7 +508,13 @@ void VideoRTGDeinit(void) {
 	free(s_buffer);
 	free(s_swapped);
 	free(s_scaledOutput);
+	free(s_canvasSwapped);
+	free(s_canvasScaledOutput);
 	s_buffer = NULL;
 	s_swapped = NULL;
 	s_scaledOutput = NULL;
+	s_canvasSwapped = NULL;
+	s_canvasSwappedCapacity = 0;
+	s_canvasScaledOutput = NULL;
+	s_canvasScaledCapacity = 0;
 }

@@ -317,6 +317,7 @@ void mGUIShowConfig(struct mGUIRunner* runner, struct GUIMenuItem* extra, size_t
 			if (gbaBiosPath[0]) {
 				mCoreConfigSetValue(&runner->config, "gba.bios", gbaBiosPath);
 			}
+#ifdef M_CORE_GB
 			if (gbBiosPath[0]) {
 				mCoreConfigSetValue(&runner->config, "gb.bios", gbBiosPath);
 			}
@@ -326,6 +327,7 @@ void mGUIShowConfig(struct mGUIRunner* runner, struct GUIMenuItem* extra, size_t
 			if (sgbBiosPath[0]) {
 				mCoreConfigSetValue(&runner->config, "sgb.bios", sgbBiosPath);
 			}
+#endif
 			for (i = 0; i < GUIMenuItemListSize(&menu.items); ++i) {
 				item = GUIMenuItemListGetPointer(&menu.items, i);
 				if (!item->validStates || !GUIVariantIsString(item->data)) {

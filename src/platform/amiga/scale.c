@@ -31,6 +31,21 @@ void ScaleNearest(const uint16_t* src, int srcStride, int w, int h, uint16_t* ds
 	}
 }
 
+void ScaleNearestFit(const uint16_t* src, int srcStride, int srcW, int srcH, uint16_t* dst, int dstStride, int dstW, int dstH) {
+	int y;
+	for (y = 0; y < dstH; ++y) {
+		int sy = y * srcH / dstH;
+		const uint16_t* srcRow = &src[sy * srcStride];
+		uint16_t* dstRow = &dst[y * dstStride];
+
+		int x;
+		for (x = 0; x < dstW; ++x) {
+			int sx = x * srcW / dstW;
+			dstRow[x] = srcRow[sx];
+		}
+	}
+}
+
 int ScaleBestFit(int w, int h, int targetW, int targetH) {
 	int byWidth = targetW / w;
 	int byHeight = targetH / h;

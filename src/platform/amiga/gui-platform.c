@@ -7,6 +7,7 @@
 
 #include "gamepad.h"
 #include "gui-font-target.h"
+#include "scale.h"
 #include "video-rtg.h"
 
 #include <mgba/core/core.h>
@@ -24,6 +25,25 @@
  * GCN1_INPUT 0x47434E31 "GCN1") -- unique within this frontend, no
  * cross-platform meaning. */
 #define AMIGA_KEYBOARD_INPUT 0x414D4B42 /* "AMKB" */
+
+/* mgba's shared gui-runner.c menu layout (src/util/gui/menu.c) assumes
+ * a screen wide enough that a left-aligned title and GUIDrawClock()'s
+ * own horizontally-centered wall clock don't collide -- true on every
+ * other gui-runner.c platform's own real screen (3DS 320-400px, PSP2
+ * 960px, Switch 1280px, Wii 640px), but not on the GBA's native
+ * GBA_VIDEO_HORIZONTAL_PIXELS (240) with this frontend's deliberately
+ * oversized "2x" font (gui-font.c, chosen for legibility over the
+ * original 1x bitmap font) -- confirmed live: title and clock text
+ * visibly overlapped at native GBA resolution. The menu/browser canvas
+ * is a separate, fixed size instead -- 2x GBA resolution, matching the
+ * font's own natural size and much closer to what every other port
+ * actually works with -- entirely decoupled from VideoRTGBuffer() (the
+ * GBA core's own native-resolution output), scaled to fit the window at
+ * blit time via VideoRTGBlitCanvas(). */
+#define GUI_CANVAS_WIDTH (GBA_VIDEO_HORIZONTAL_PIXELS * 2)
+#define GUI_CANVAS_HEIGHT (GBA_VIDEO_VERTICAL_PIXELS * 2)
+
+static uint16_t* s_guiCanvas;
 
 /* Set by _pollInput() (below), read by _running() -- see that pair's
  * own comments for why pumping the window's IDCMP queue belongs in
@@ -48,11 +68,11 @@ static void _drawStart(void) {
 	 * glyphs/icons it actually needs this frame, so stale content
 	 * from a differently laid-out previous frame would otherwise
 	 * remain on screen. */
-	memset(VideoRTGBuffer(), 0, AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS * sizeof(uint16_t));
+	memset(s_guiCanvas, 0, GUI_CANVAS_WIDTH * GUI_CANVAS_HEIGHT * sizeof(uint16_t));
 }
 
 static void _drawEnd(void) {
-	VideoRTGBlit();
+	VideoRTGBlitCanvas(s_guiCanvas, GUI_CANVAS_WIDTH, GUI_CANVAS_HEIGHT);
 }
 
 /* GUIPollInput() (mgba-util/gui.c) calls params.pollInput on every
@@ -114,26 +134,39 @@ static uint16_t _fadeHalf(uint16_t v) {
 	return (uint16_t) (r | (g << 5) | (b << 11));
 }
 
-/* Row-by-row rather than one flat copy: src and VideoRTGBuffer() can
- * each be padded to AMIGA_VIDEO_STRIDE but srcWidth (the real content
- * width) need not fill that stride -- true for s_coreBuffer (always
- * GBA_VIDEO_HORIZONTAL_PIXELS of real content) and for _drawScreenshot's
- * arbitrary width/height alike. */
+/* Native-GBA-resolution staging area: faded (or not) here first, then
+ * 2x-upscaled (exactly GUI_CANVAS_WIDTH/HEIGHT's own ratio to
+ * GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS -- a clean integer scale,
+ * ScaleNearest() rather than ScaleNearestFit()) into s_guiCanvas. Fading
+ * at native size first and letting the scale pass replicate already-
+ * faded pixel values is simpler than fading GUI_CANVAS_WIDTH *
+ * GUI_CANVAS_HEIGHT pixels on every call. */
+static uint16_t s_frameStaging[GBA_VIDEO_HORIZONTAL_PIXELS * GBA_VIDEO_VERTICAL_PIXELS];
+
+/* Row-by-row rather than one flat copy: src can be padded to a stride
+ * wider than `width` -- true for s_coreBuffer (AMIGA_VIDEO_STRIDE,
+ * wider than GBA_VIDEO_HORIZONTAL_PIXELS of real content) but not for
+ * _drawScreenshot's tightly-packed `pixels` (srcStride == width there).
+ * Both callers' width/height are always GBA_VIDEO_HORIZONTAL/
+ * VERTICAL_PIXELS in practice (s_coreBuffer always is; a save state's
+ * stored screenshot is mCoreLoadState's own GBA-native size) -- not
+ * defensively checked against GUI_CANVAS_WIDTH/HEIGHT's fixed 2x
+ * capacity, since both are this file's own internal callers. */
 static void _blitFaded(const uint16_t* src, unsigned srcStride, unsigned width, unsigned height, bool faded) {
-	uint16_t* dst = VideoRTGBuffer();
 	unsigned y;
 	for (y = 0; y < height; ++y) {
 		const uint16_t* srcRow = &src[y * srcStride];
-		uint16_t* dstRow = &dst[y * AMIGA_VIDEO_STRIDE];
+		uint16_t* stageRow = &s_frameStaging[y * GBA_VIDEO_HORIZONTAL_PIXELS];
 		if (!faded) {
-			memcpy(dstRow, srcRow, width * sizeof(uint16_t));
+			memcpy(stageRow, srcRow, width * sizeof(uint16_t));
 			continue;
 		}
 		unsigned x;
 		for (x = 0; x < width; ++x) {
-			dstRow[x] = _fadeHalf(srcRow[x]);
+			stageRow[x] = _fadeHalf(srcRow[x]);
 		}
 	}
+	ScaleNearest(s_frameStaging, GBA_VIDEO_HORIZONTAL_PIXELS, (int) width, (int) height, s_guiCanvas, GUI_CANVAS_WIDTH, 2);
 }
 
 static void _setup(struct mGUIRunner* runner) {
@@ -208,12 +241,19 @@ static struct GUIInputKeys s_keySources[] = {
 };
 
 void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
-	GUIFontSetTarget(VideoRTGBuffer(), GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS, AMIGA_VIDEO_STRIDE);
+	if (!s_guiCanvas) {
+		s_guiCanvas = calloc((size_t) GUI_CANVAS_WIDTH * GUI_CANVAS_HEIGHT, sizeof(uint16_t));
+	}
+	GUIFontSetTarget(s_guiCanvas, GUI_CANVAS_WIDTH, GUI_CANVAS_HEIGHT, GUI_CANVAS_WIDTH);
 
-	runner->params.width = GBA_VIDEO_HORIZONTAL_PIXELS;
-	runner->params.height = GBA_VIDEO_VERTICAL_PIXELS;
+	runner->params.width = GUI_CANVAS_WIDTH;
+	runner->params.height = GUI_CANVAS_HEIGHT;
 	runner->params.font = GUIFontCreate();
-	runner->params.basePath = "";
+	/* SYS: always exists on a booted system (unlike e.g. a specific DHn:
+	 * volume, which may not), so it's a safe universal starting point
+	 * for the ROM browser -- the user navigates to wherever their ROMs
+	 * actually live from there. */
+	runner->params.basePath = "SYS:";
 	runner->params.drawStart = _drawStart;
 	runner->params.drawEnd = _drawEnd;
 	runner->params.pollInput = _pollInput;
@@ -222,6 +262,14 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 	runner->params.guiPrepare = _guiPrepare;
 	runner->params.guiFinish = _guiFinish;
 	runner->params.getText = _getText;
+	/* mGUIInit()'s own GUIInit(&runner->params) call (gui-runner.c) ran
+	 * before AmigaGuiPlatformInit() was reached, i.e. before basePath
+	 * above had a real value -- GUIInit() copies basePath into
+	 * currentPath once, so without this second call the ROM browser
+	 * would start from an empty currentPath instead of "SYS:". Cheap
+	 * and otherwise idempotent (just clears inputHistory and re-copies
+	 * basePath -> currentPath). */
+	GUIInit(&runner->params);
 
 	/* mGUIInit() (gui-runner.c) already called mInputMapInit() on this
 	 * before AmigaGuiPlatformInit() is reached -- see this file's own
@@ -259,4 +307,6 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 void AmigaGuiPlatformDeinit(struct mGUIRunner* runner) {
 	GUIFontDestroy(runner->params.font);
 	runner->params.font = NULL;
+	free(s_guiCanvas);
+	s_guiCanvas = NULL;
 }
