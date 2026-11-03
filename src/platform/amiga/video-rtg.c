@@ -33,6 +33,8 @@ static int s_scale;
 static int s_blitX;
 static int s_blitY;
 static bool s_fullscreen;
+static int s_contentWidth = GBA_VIDEO_HORIZONTAL_PIXELS;
+static int s_contentHeight = GBA_VIDEO_VERTICAL_PIXELS;
 static uint32_t s_keys;
 static uint32_t s_guiKeys;
 static enum MenuAction s_menuAction;
@@ -109,8 +111,14 @@ static int _mapRawKeyGui(UWORD code) {
  * white-left/green-right sprites, same positions, no channel swap or
  * scrambling. */
 static void _blitSwapBytes(void) {
+	/* Only the real content rows, not the buffer's full AMIGA_VIDEO_
+	 * MAX_HEIGHT allocation -- GB's s_contentHeight (144) is shorter
+	 * than GBA's (160), so this does less work for a smaller core,
+	 * exactly like the rest of this function's own per-pixel cost
+	 * already scales with content size via ScaleNearest() below. */
 	size_t i;
-	for (i = 0; i < AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS; ++i) {
+	size_t count = (size_t) AMIGA_VIDEO_STRIDE * s_contentHeight;
+	for (i = 0; i < count; ++i) {
 		uint16_t v = s_buffer[i];
 		s_swapped[i] = (uint16_t) ((v >> 8) | (v << 8));
 	}
@@ -121,12 +129,12 @@ static void _blitSwapBytes(void) {
  * seen in practice on Z3660, which happily invents a CUSTOM mode of
  * whatever exact size is asked for, rather than reporting back what the
  * board/monitor can actually do) and returns the one with the largest
- * pixel area, plus the largest integer GBA-resolution scale that fits
- * inside it. Returns false if P96 reports no usable mode at all. */
+ * pixel area, plus the largest integer content-resolution scale that
+ * fits inside it. Returns false if P96 reports no usable mode at all. */
 static bool _pickAutoScaleMode(ULONG* outId, int* outScale) {
 	struct List* modes = p96AllocModeListTags(
-		P96MA_MinWidth, GBA_VIDEO_HORIZONTAL_PIXELS,
-		P96MA_MinHeight, GBA_VIDEO_VERTICAL_PIXELS,
+		P96MA_MinWidth, s_contentWidth,
+		P96MA_MinHeight, s_contentHeight,
 		P96MA_MinDepth, 16,
 		P96MA_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
 		TAG_DONE);
@@ -153,7 +161,7 @@ static bool _pickAutoScaleMode(ULONG* outId, int* outScale) {
 		return false;
 	}
 	*outId = bestId;
-	*outScale = ScaleBestFit(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS, bestWidth, bestHeight);
+	*outScale = ScaleBestFit(s_contentWidth, s_contentHeight, bestWidth, bestHeight);
 	return true;
 }
 
@@ -163,9 +171,13 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 	 * VideoRTGReopen() -- core->setVideoBuffer() is only ever called once
 	 * (see main.c), so a later live scale/mode change (the Settings menu)
 	 * must keep this same pointer valid, only reopening the window/screen
-	 * around it. */
-	s_buffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
-	s_swapped = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
+	 * around it. Sized for the largest content this frontend ever shows
+	 * (AMIGA_VIDEO_MAX_HEIGHT, SGB-with-border's own 224 rows -- see that
+	 * macro's own comment), not just GBA_VIDEO_VERTICAL_PIXELS -- a
+	 * smaller core (GB, or GBA) simply uses less of it, same as the
+	 * stride already being wider than GBA's own native 240. */
+	s_buffer = calloc(AMIGA_VIDEO_STRIDE * AMIGA_VIDEO_MAX_HEIGHT, sizeof(uint16_t));
+	s_swapped = calloc(AMIGA_VIDEO_STRIDE * AMIGA_VIDEO_MAX_HEIGHT, sizeof(uint16_t));
 	if (!s_buffer || !s_swapped) {
 		return false;
 	}
@@ -214,8 +226,8 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 			}
 		} else {
 			id = p96BestModeIDTags(
-				P96BIDTAG_NominalWidth, GBA_VIDEO_HORIZONTAL_PIXELS * scale,
-				P96BIDTAG_NominalHeight, GBA_VIDEO_VERTICAL_PIXELS * scale,
+				P96BIDTAG_NominalWidth, s_contentWidth * scale,
+				P96BIDTAG_NominalHeight, s_contentHeight * scale,
 				P96BIDTAG_Depth, 16,
 				P96BIDTAG_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
 				TAG_DONE);
@@ -225,8 +237,8 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 		}
 
 		s_scale = scale;
-		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
-		unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+		unsigned scaledWidth = s_contentWidth * s_scale;
+		unsigned scaledHeight = s_contentHeight * s_scale;
 		if (s_scale > 1) {
 			/* Owned entirely by us (not core->setVideoBuffer()'s stride
 			 * convention), so no AMIGA_VIDEO_STRIDE-style padding needed
@@ -291,8 +303,8 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 		}
 	} else {
 		s_scale = scale;
-		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
-		unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+		unsigned scaledWidth = s_contentWidth * s_scale;
+		unsigned scaledHeight = s_contentHeight * s_scale;
 		if (s_scale > 1) {
 			s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
 			if (!s_scaledOutput) {
@@ -336,33 +348,48 @@ uint16_t* VideoRTGBuffer(void) {
 	return s_buffer;
 }
 
+void VideoRTGSetContentSize(int width, int height) {
+	/* Clamped to the buffer's own fixed allocation (VideoRTGInit()) --
+	 * never expected to actually trigger for any real mCore, just a
+	 * guard against a future core type this frontend hasn't accounted
+	 * for yet silently overrunning s_buffer/s_swapped. */
+	if (width > AMIGA_VIDEO_STRIDE) {
+		width = AMIGA_VIDEO_STRIDE;
+	}
+	if (height > AMIGA_VIDEO_MAX_HEIGHT) {
+		height = AMIGA_VIDEO_MAX_HEIGHT;
+	}
+	s_contentWidth = width;
+	s_contentHeight = height;
+}
+
 void VideoRTGBlit(void) {
 	if (!s_window) {
 		return;
 	}
-	/* Byte-swap at native size first, scale (if any) second -- scaling
-	 * is pure pixel replication, indifferent to byte order, and this
-	 * way the swap pass touches GBA_VIDEO_HORIZONTAL_PIXELS *
-	 * GBA_VIDEO_VERTICAL_PIXELS values regardless of scale instead of
-	 * scale^2 as many. */
+	/* Byte-swap at native content size first, scale (if any) second --
+	 * scaling is pure pixel replication, indifferent to byte order, and
+	 * this way the swap pass touches s_contentWidth * s_contentHeight
+	 * values regardless of scale instead of scale^2 as many. */
 	_blitSwapBytes();
 
 	struct RenderInfo ri;
 	ri.RGBFormat = RGBFB_B5G6R5PC;
 
 	if (s_scale > 1) {
-		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
-		ScaleNearest(s_swapped, AMIGA_VIDEO_STRIDE, GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS,
+		unsigned scaledWidth = s_contentWidth * s_scale;
+		unsigned scaledHeight = s_contentHeight * s_scale;
+		ScaleNearest(s_swapped, AMIGA_VIDEO_STRIDE, s_contentWidth, s_contentHeight,
 			s_scaledOutput, scaledWidth, s_scale);
 		ri.Memory = s_scaledOutput;
 		ri.BytesPerRow = scaledWidth * sizeof(uint16_t);
 		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft + s_blitX, s_window->BorderTop + s_blitY,
-			scaledWidth, GBA_VIDEO_VERTICAL_PIXELS * s_scale);
+			scaledWidth, scaledHeight);
 	} else {
 		ri.Memory = s_swapped;
 		ri.BytesPerRow = AMIGA_VIDEO_STRIDE * sizeof(uint16_t);
 		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft + s_blitX, s_window->BorderTop + s_blitY,
-			GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
+			s_contentWidth, s_contentHeight);
 	}
 }
 
@@ -387,14 +414,14 @@ void VideoRTGBlitCanvas(const uint16_t* canvas, int canvasWidth, int canvasHeigh
 	}
 
 	/* Fit the canvas to whatever content size VideoRTGReopen() last
-	 * resolved for gameplay (GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS *
-	 * s_scale) -- not necessarily an integer multiple of canvasWidth/
-	 * canvasHeight, unlike VideoRTGBlit()'s own ScaleNearest() path, so
+	 * resolved for gameplay (s_contentWidth/Height * s_scale) -- not
+	 * necessarily an integer multiple of canvasWidth/canvasHeight,
+	 * unlike VideoRTGBlit()'s own ScaleNearest() path, so
 	 * ScaleNearestFit()'s per-axis ratio sampling is needed here instead.
 	 * Reuses s_blitX/s_blitY, so a centered fullscreen picture centers
 	 * the GUI canvas the same way. */
-	unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
-	unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+	unsigned scaledWidth = s_contentWidth * s_scale;
+	unsigned scaledHeight = s_contentHeight * s_scale;
 
 	size_t outPixels = (size_t) scaledWidth * scaledHeight;
 	if (s_canvasScaledCapacity < (int) outPixels) {

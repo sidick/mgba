@@ -98,12 +98,33 @@ static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* a
  * such as AmiPilotServer SERIAL). */
 static struct mLogger* s_logger;
 
+/* core->currentVideoSize() (mgba/core/core.h) needs the ROM already
+ * loaded to answer correctly for a Super Game Boy ROM specifically
+ * (whether its border is shown depends on both the ROM's own SGB flag
+ * and the "gb.sgbBorders" config, neither known until mCoreLoadFile())
+ * -- so this is called after mCoreLoadFile(), not right after
+ * core->init(). Resizes the window for whatever just got loaded and
+ * points the core at the (unmoved) pixel buffer once sized correctly,
+ * reusing the exact VideoRTGReopen() mechanism the Settings menu's own
+ * scale picker already relies on. `scale` should be the user's own
+ * originally-requested value (0 for auto, or an explicit -S), not
+ * whatever VideoRTGScale() last resolved to -- re-resolving "auto"
+ * against the real (possibly smaller) content size can land on a larger
+ * integer scale than GBA's own assumed size would have. */
+static void _sizeForCore(struct mCore* core, bool fullscreen, int scale) {
+	unsigned width, height;
+	core->currentVideoSize(core, &width, &height);
+	VideoRTGSetContentSize((int) width, (int) height);
+	VideoRTGReopen(fullscreen, scale);
+	core->setVideoBuffer(core, VideoRTGBuffer(), AMIGA_VIDEO_STRIDE);
+}
+
 /* The original (and still default, when a ROM path is given on the
  * command line) frontend: load exactly that ROM and run it, with the
  * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
  * About/scale -- no on-screen GUI at all. Unchanged by the addition of
  * _runBrowser() below. */
-static int _runDirect(struct mArguments* args, bool fullscreen) {
+static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 	struct mCore* core = mCoreFind(args->fname);
 	if (!core) {
 		AmigaDebugLogf("Could not find a core to run %s\n", args->fname);
@@ -111,8 +132,8 @@ static int _runDirect(struct mArguments* args, bool fullscreen) {
 	}
 
 	core->init(core);
-	core->setVideoBuffer(core, VideoRTGBuffer(), AMIGA_VIDEO_STRIDE);
 	mCoreLoadFile(core, args->fname);
+	_sizeForCore(core, fullscreen, scale);
 	mCoreConfigInit(&core->config, "amiga");
 	mCoreConfigLoad(&core->config);
 
@@ -148,8 +169,22 @@ static int _runDirect(struct mArguments* args, bool fullscreen) {
 		case MENU_ACTION_OPEN_ROM: {
 			char* path = MenuOpenROM(VideoRTGWindow());
 			if (path) {
+				/* Same mCore object reused for the new ROM -- correct for
+				 * same-platform ROM switches (the common case), but not a
+				 * real platform re-detection: a GBA core handed a GB ROM
+				 * (or vice versa) here would misbehave. Re-detecting via
+				 * mCoreFind() and recreating the core entirely would fix
+				 * that properly; not done here -- a bigger, separate
+				 * change, and a pre-existing limitation of this menu item,
+				 * not something this resolution work introduces. Keeps the
+				 * window at its current scale (VideoRTGScale()) rather
+				 * than re-running auto-detection, so swapping ROMs doesn't
+				 * surprise the user with a resized window unless the new
+				 * ROM's own resolution actually differs (SGB border vs
+				 * not, say). */
 				core->unloadROM(core);
 				mCoreLoadFile(core, path);
+				_sizeForCore(core, fullscreen, VideoRTGScale());
 				core->reset(core);
 				free(path);
 			}
@@ -242,7 +277,7 @@ static int _realMain(int argc, char** argv) {
 	 * input alone is still a fully working frontend. */
 	GamepadInit();
 
-	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen) : _runBrowser();
+	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen, amigaOpts.scale) : _runBrowser();
 
 	GamepadDeinit();
 	VideoRTGDeinit();

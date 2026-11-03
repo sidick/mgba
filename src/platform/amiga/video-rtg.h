@@ -14,10 +14,19 @@
 struct Window;
 
 /* Stride of the buffer handed to core->setVideoBuffer(), in pixels. Padded
- * to 256 (not the native 240) to match the convention other mgba frontends
+ * to 256 (not GBA's native 240) to match the convention other mgba frontends
  * (3DS, PSP2) already use, and because it's a clean multiple of 32 -- useful
- * if an AGA chunky-to-planar path is ever added later. */
+ * if an AGA chunky-to-planar path is ever added later. Also happens to
+ * exactly cover SGB_VIDEO_HORIZONTAL_PIXELS (256, mgba/internal/gb/video.h)
+ * -- not a coincidence this frontend relies on, just convenient. */
 #define AMIGA_VIDEO_STRIDE 256
+
+/* Height of the VideoRTGInit()-allocated buffer -- SGB_VIDEO_VERTICAL_PIXELS
+ * (224), the tallest content any mCore this frontend supports can report
+ * from currentVideoSize() (GBA: 240x160; GB/GBC: 160x144; SGB with its
+ * border enabled: 256x224). A smaller core's content simply uses less of
+ * the buffer -- see VideoRTGSetContentSize(). */
+#define AMIGA_VIDEO_MAX_HEIGHT 224
 
 /* Probes for Picasso96API.library and opens either a window on the current
  * public screen (fullscreen=false) or a dedicated RTG screen + borderless
@@ -25,19 +34,36 @@ struct Window;
  * usable mode/screen/window could be opened -- the caller should fall back
  * to something else (currently: fail outright; AGA is a future option).
  *
+ * Content size defaults to GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS until a
+ * caller tells VideoRTGSetContentSize() otherwise (e.g. once the actual
+ * loaded core's real resolution is known) and calls VideoRTGReopen() to
+ * apply it -- this lets the window open before any core exists to query,
+ * the same way this function has always needed to.
+ *
  * `scale` is an integer pixel-replication factor (see scale.h) applied to
- * the whole GBA_VIDEO_HORIZONTAL_PIXELS x GBA_VIDEO_VERTICAL_PIXELS output
- * -- the window/screen is opened at exactly `scale` times that size. A
- * positive value is used exactly as given, with no further auto-fit.
- * Zero means "auto": in fullscreen mode, enumerate real display modes
- * (not a p96BestModeIDTags nominal-size request, which some drivers --
- * Z3660 observed -- will happily fabricate a CUSTOM mode for rather than
- * reporting what the board/monitor actually supports) and pick the
- * largest integer scale that fits the biggest one found; in windowed
- * mode zero just means the fixed default of 1, since there's no screen
- * of our own to measure. Passing 1 behaves exactly as before scaling
- * existed (no scaling pass, no extra buffer). */
+ * the whole current content size -- the window/screen is opened at exactly
+ * `scale` times that size. A positive value is used exactly as given, with
+ * no further auto-fit. Zero means "auto": in fullscreen mode, enumerate
+ * real display modes (not a p96BestModeIDTags nominal-size request, which
+ * some drivers -- Z3660 observed -- will happily fabricate a CUSTOM mode
+ * for rather than reporting what the board/monitor actually supports) and
+ * pick the largest integer scale that fits the biggest one found; in
+ * windowed mode zero just means the fixed default of 1, since there's no
+ * screen of our own to measure. Passing 1 behaves exactly as before
+ * scaling existed (no scaling pass, no extra buffer). */
 bool VideoRTGInit(bool fullscreen, int scale);
+
+/* Sets the content size used by VideoRTGReopen()'s own window/screen
+ * sizing and VideoRTGBlit()'s own blit geometry, in place of the
+ * GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS default -- intended for
+ * core->currentVideoSize() (mgba/core/core.h), once a core is loaded, so
+ * a GB/GBC ROM (160x144) gets a window sized for its own resolution
+ * instead of GBA's (240x160). Does NOT itself reopen the window --
+ * follow with VideoRTGReopen() to apply it (same fullscreen/scale as
+ * before is fine; only the content size changed). Clamped to
+ * AMIGA_VIDEO_STRIDE x AMIGA_VIDEO_MAX_HEIGHT, the buffer's own fixed
+ * allocation. */
+void VideoRTGSetContentSize(int width, int height);
 
 /* Tears down and reopens the window/screen (and the menu strip, see menu.h)
  * at a new fullscreen/scale combination, same meaning as VideoRTGInit()'s own
