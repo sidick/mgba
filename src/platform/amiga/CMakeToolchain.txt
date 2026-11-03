@@ -7,10 +7,15 @@
 #     -DCMAKE_TOOLCHAIN_FILE=src/platform/amiga/CMakeToolchain.txt \
 #     -DAMIGA_TOOLCHAIN_PREFIX=/opt/m68k-amigaos-gcc-16.2 ..
 #
-# Target: 68060 or 68020+ (PiStorm/Emu68). Setting CMAKE_SYSTEM_NAME to
-# "Generic" makes the top-level CMakeLists.txt automatically force
-# DISABLE_FRONTENDS, MINIMAL_CORE, and a static build, same as the other
-# embedded console ports (3DS/Wii/Switch/Vita).
+# Target: 68040 with FPU. This is the best PiStorm/Emu68 target (Emu68's
+# dynamic 68k->ARM translation models the 68040 most faithfully) and,
+# unlike the 68060, the full 68040 has its complete FPU -- including the
+# transcendentals (FSIN/FCOS/FETOX/...) the 68060 removed from silicon --
+# so there's no FPSP-software-emulation story to worry about for real
+# hardware either. Setting CMAKE_SYSTEM_NAME to "Generic" makes the
+# top-level CMakeLists.txt automatically force DISABLE_FRONTENDS,
+# MINIMAL_CORE, and a static build, same as the other embedded console
+# ports (3DS/Wii/Switch/Vita).
 
 if(DEFINED ENV{AMIGA_TOOLCHAIN_PREFIX} AND NOT DEFINED AMIGA_TOOLCHAIN_PREFIX)
 	set(AMIGA_TOOLCHAIN_PREFIX $ENV{AMIGA_TOOLCHAIN_PREFIX})
@@ -53,7 +58,7 @@ set(CMAKE_RANLIB "${AMIGA_TOOLCHAIN_PREFIX}/bin/m68k-amigaos-ranlib" CACHE INTER
 # once the compiler/as/ld/collect2 binaries themselves have been approved,
 # since library code-signing is enforced differently from launching an
 # executable. Nothing here needs LTO; just avoid loading the plugin.
-set(AMIGA_ARCH_FLAGS "-m68060 -mhard-float -mcrt=newlib -fno-lto -D__BIG_ENDIAN__ -D_GNU_SOURCE" CACHE INTERNAL "arch flags")
+set(AMIGA_ARCH_FLAGS "-m68040 -mhard-float -mcrt=newlib -fno-lto -D__BIG_ENDIAN__ -D_GNU_SOURCE" CACHE INTERNAL "arch flags")
 
 set(CMAKE_C_FLAGS "${AMIGA_ARCH_FLAGS}" CACHE INTERNAL "c compiler flags")
 set(CMAKE_CXX_FLAGS "${AMIGA_ARCH_FLAGS}" CACHE INTERNAL "cxx compiler flags")
@@ -73,8 +78,10 @@ set(PKG_CONFIG_EXECUTABLE "/dev/null" CACHE INTERNAL "" FORCE)
 # bundled headers -- simpler to link against directly than a shared
 # .library route (z.library/png16_lib), which can still be added later
 # if a smaller binary or a shared system copy becomes worth the extra
-# complexity. Pre-seed the exact variant matching our -m68060
-# -mhard-float flags (libm020/libm881) so find_package(ZLIB)/
+# complexity. Pre-seed the exact variant matching our -m68040
+# -mhard-float flags (libm020/libm881 -- still the right variant for the
+# 68040, same as the 68060, since both are 68020+ with a real FPU) so
+# find_package(ZLIB)/
 # find_package(PNG) (invoked via find_feature() in the top-level
 # CMakeLists.txt) use these instead of searching.
 set(ZLIB_INCLUDE_DIR "${AMIGA_TOOLCHAIN_PREFIX}/m68k-amigaos/include" CACHE PATH "")
