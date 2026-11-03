@@ -19,8 +19,14 @@
  * public screen (fullscreen=false) or a dedicated RTG screen + borderless
  * window (fullscreen=true). Returns false if P96 isn't available or no
  * usable mode/screen/window could be opened -- the caller should fall back
- * to something else (currently: fail outright; AGA is a future option). */
-bool VideoRTGInit(bool fullscreen);
+ * to something else (currently: fail outright; AGA is a future option).
+ *
+ * `scale` is an integer pixel-replication factor (see scale.h) applied to
+ * the whole GBA_VIDEO_HORIZONTAL_PIXELS x GBA_VIDEO_VERTICAL_PIXELS output
+ * -- the window/screen is opened at exactly `scale` times that size, not
+ * clamped or auto-fit to any larger mode the hardware might support.
+ * Passing 1 behaves exactly as before (no scaling pass, no extra buffer). */
+bool VideoRTGInit(bool fullscreen, int scale);
 
 /* The buffer to pass to core->setVideoBuffer(core, buffer, AMIGA_VIDEO_STRIDE).
  * Owned by this module; valid between VideoRTGInit() and VideoRTGDeinit(). */

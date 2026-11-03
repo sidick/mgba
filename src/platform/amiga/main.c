@@ -12,6 +12,7 @@
 #include <mgba/feature/commandline.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <dos/dostags.h>
 #include <exec/tasks.h>
@@ -21,10 +22,13 @@
 /* The only way to quit right now is the window's close gadget (windowed
  * mode) or Ctrl-C from a shell (fullscreen has no close gadget of its own
  * yet). */
-#define AMIGA_OPTIONS "F"
+#define AMIGA_OPTIONS "FS:"
 #define AMIGA_USAGE \
 	"Amiga frontend options:\n" \
 	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window\n" \
+	"  -S SCALE         Integer pixel-doubling scale (default 1); the window/\n" \
+	"                   screen opens at exactly SCALE times GBA resolution --\n" \
+	"                   not auto-fit to a larger mode the hardware might support\n" \
 	"\n" \
 	"Keyboard mapping:\n" \
 	"  Cursor keys      D-pad\n" \
@@ -35,17 +39,31 @@
 	"A joystick/CD32 pad/USB gamepad (via Poseidon) on the port printed\n" \
 	"\"2\" is read too -- see src/platform/amiga/gamepad.c for the mapping."
 
+/* Upper bound purely as a sanity check against a typo/garbage argument --
+ * not a hardware limit. A window/screen this large would exceed most RTG
+ * cards' own mode tables (and memory) long before this matters. */
+#define AMIGA_MAX_SCALE 16
+
 struct AmigaOpts {
 	bool fullscreen;
+	int scale;
 };
 
 static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* arg) {
 	struct AmigaOpts* opts = parser->opts;
-	UNUSED(arg);
 	switch (option) {
 	case 'F':
+		UNUSED(arg);
 		opts->fullscreen = true;
 		return true;
+	case 'S': {
+		int scale = atoi(arg);
+		if (scale < 1 || scale > AMIGA_MAX_SCALE) {
+			return false;
+		}
+		opts->scale = scale;
+		return true;
+	}
 	default:
 		return false;
 	}
@@ -68,7 +86,7 @@ static int _realMain(int argc, char** argv) {
 	s_logger.d.filter->defaultLevels = mLOG_FATAL | mLOG_ERROR;
 	mLogSetDefaultLogger(&s_logger.d);
 
-	struct AmigaOpts amigaOpts = { false };
+	struct AmigaOpts amigaOpts = { false, 1 };
 	struct mSubParser subparser = {
 		.usage = AMIGA_USAGE,
 		.parse = _parseAmigaOpts,
@@ -92,7 +110,7 @@ static int _realMain(int argc, char** argv) {
 		return 0;
 	}
 
-	if (!VideoRTGInit(amigaOpts.fullscreen)) {
+	if (!VideoRTGInit(amigaOpts.fullscreen, amigaOpts.scale)) {
 		fprintf(stderr, "Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
 		VideoRTGDeinit();
 		mArgumentsDeinit(&args);

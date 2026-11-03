@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "scale.h"
 #include "video-rtg.h"
 
 #include <mgba/gba/interface.h>
@@ -26,6 +27,8 @@ static struct Screen* s_screen;
 static struct Window* s_window;
 static uint16_t* s_buffer;
 static uint16_t* s_swapped;
+static uint16_t* s_scaledOutput;
+static int s_scale;
 static uint32_t s_keys;
 
 /* Keyboard-only for now (no joystick/gamepad support yet -- see
@@ -80,12 +83,28 @@ static void _blitSwapBytes(void) {
 	}
 }
 
-bool VideoRTGInit(bool fullscreen) {
+bool VideoRTGInit(bool fullscreen, int scale) {
+	if (scale < 1) {
+		scale = 1;
+	}
+	s_scale = scale;
+	unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * scale;
+	unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * scale;
+
 	s_keys = 0;
 	s_buffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	s_swapped = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	if (!s_buffer || !s_swapped) {
 		return false;
+	}
+	if (s_scale > 1) {
+		/* Owned entirely by us (not core->setVideoBuffer()'s stride
+		 * convention), so no AMIGA_VIDEO_STRIDE-style padding needed --
+		 * exactly scaledWidth pixels per row. */
+		s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
+		if (!s_scaledOutput) {
+			return false;
+		}
 	}
 
 	P96Base = OpenLibrary(P96NAME, 2);
@@ -95,8 +114,8 @@ bool VideoRTGInit(bool fullscreen) {
 
 	if (fullscreen) {
 		ULONG id = p96BestModeIDTags(
-			P96BIDTAG_NominalWidth, GBA_VIDEO_HORIZONTAL_PIXELS,
-			P96BIDTAG_NominalHeight, GBA_VIDEO_VERTICAL_PIXELS,
+			P96BIDTAG_NominalWidth, scaledWidth,
+			P96BIDTAG_NominalHeight, scaledHeight,
 			P96BIDTAG_Depth, 16,
 			P96BIDTAG_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
 			TAG_DONE);
@@ -106,8 +125,8 @@ bool VideoRTGInit(bool fullscreen) {
 
 		s_screen = p96OpenScreenTags(
 			P96SA_DisplayID, id,
-			P96SA_Width, GBA_VIDEO_HORIZONTAL_PIXELS,
-			P96SA_Height, GBA_VIDEO_VERTICAL_PIXELS,
+			P96SA_Width, scaledWidth,
+			P96SA_Height, scaledHeight,
 			P96SA_Depth, 16,
 			P96SA_Title, (ULONG) "mGBA",
 			P96SA_Quiet, TRUE,
@@ -122,16 +141,16 @@ bool VideoRTGInit(bool fullscreen) {
 			WA_Borderless, TRUE,
 			WA_Activate, TRUE,
 			WA_RMBTrap, TRUE,
-			WA_Width, GBA_VIDEO_HORIZONTAL_PIXELS,
-			WA_Height, GBA_VIDEO_VERTICAL_PIXELS,
+			WA_Width, scaledWidth,
+			WA_Height, scaledHeight,
 			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
 			TAG_DONE);
 	} else {
 		s_window = OpenWindowTags(NULL,
 			WA_PubScreenName, (ULONG) "Workbench",
 			WA_Title, (ULONG) "mGBA",
-			WA_InnerWidth, GBA_VIDEO_HORIZONTAL_PIXELS,
-			WA_InnerHeight, GBA_VIDEO_VERTICAL_PIXELS,
+			WA_InnerWidth, scaledWidth,
+			WA_InnerHeight, scaledHeight,
 			WA_DragBar, TRUE,
 			WA_DepthGadget, TRUE,
 			WA_CloseGadget, TRUE,
@@ -151,15 +170,30 @@ void VideoRTGBlit(void) {
 	if (!s_window) {
 		return;
 	}
+	/* Byte-swap at native size first, scale (if any) second -- scaling
+	 * is pure pixel replication, indifferent to byte order, and this
+	 * way the swap pass touches GBA_VIDEO_HORIZONTAL_PIXELS *
+	 * GBA_VIDEO_VERTICAL_PIXELS values regardless of scale instead of
+	 * scale^2 as many. */
 	_blitSwapBytes();
 
 	struct RenderInfo ri;
-	ri.Memory = s_swapped;
-	ri.BytesPerRow = AMIGA_VIDEO_STRIDE * sizeof(uint16_t);
 	ri.RGBFormat = RGBFB_B5G6R5PC;
 
-	p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft, s_window->BorderTop,
-		GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
+	if (s_scale > 1) {
+		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
+		ScaleNearest(s_swapped, AMIGA_VIDEO_STRIDE, GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS,
+			s_scaledOutput, scaledWidth, s_scale);
+		ri.Memory = s_scaledOutput;
+		ri.BytesPerRow = scaledWidth * sizeof(uint16_t);
+		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft, s_window->BorderTop,
+			scaledWidth, GBA_VIDEO_VERTICAL_PIXELS * s_scale);
+	} else {
+		ri.Memory = s_swapped;
+		ri.BytesPerRow = AMIGA_VIDEO_STRIDE * sizeof(uint16_t);
+		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft, s_window->BorderTop,
+			GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
+	}
 }
 
 bool VideoRTGShouldQuit(void) {
@@ -213,6 +247,8 @@ void VideoRTGDeinit(void) {
 	}
 	free(s_buffer);
 	free(s_swapped);
+	free(s_scaledOutput);
 	s_buffer = NULL;
 	s_swapped = NULL;
+	s_scaledOutput = NULL;
 }
