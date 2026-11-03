@@ -13,6 +13,7 @@
 #include <mgba/core/config.h>
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
+#include <mgba/core/serialize.h>
 #include <mgba/feature/commandline.h>
 #include <mgba-util/vfs.h>
 
@@ -46,6 +47,10 @@
 	"  X / Z            A / B\n" \
 	"  A / S            L / R\n" \
 	"  Return / Backspace  Start / Select\n" \
+	"\n" \
+	"Project menu (Right-Amiga shortcuts): Open ROM.../RA-O, Reset/RA-R,\n" \
+	"Pause/RA-P, Quick Save/RA-S, Quick Load/RA-L, Screenshot, Quit/RA-Q.\n" \
+	"Settings menu: 1x/2x/3x/Auto scale, Toggle Fullscreen.\n" \
 	"\n" \
 	"Keyboard mapping (ROM browser/settings GUI, and its in-game pause menu):\n" \
 	"  Cursor keys      Navigate\n" \
@@ -220,6 +225,66 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 	return true;
 }
 
+/* Quick save/load use one fixed slot (".ss0" next to the ROM itself)
+ * rather than mCoreSaveState()/mCoreLoadState()'s own slot machinery --
+ * those need core->dirs.state populated via mDirectorySetOpenPath(),
+ * which needs ENABLE_DIRECTORIES (unset for this build, like every
+ * other platform's own CMake config -- it's dead everywhere in this
+ * tree, not an Amiga-specific gap). mCoreSaveStateNamed()/
+ * mCoreLoadStateNamed() take a plain VFile instead and have no such
+ * dependency, so this just builds the sibling path by hand -- the same
+ * "%s.ss%i" convention mCoreGetState() itself uses, just computed from
+ * the ROM path this frontend already has rather than core->dirs.baseName. */
+#define AMIGA_QUICK_SAVE_SLOT 0
+
+static void _quickSave(struct mCore* core, const char* romPath) {
+	char path[PATH_MAX + 8];
+	snprintf(path, sizeof(path), "%s.ss%d", romPath, AMIGA_QUICK_SAVE_SLOT);
+	struct VFile* vf = VFileOpen(path, O_CREAT | O_TRUNC | O_RDWR);
+	if (!vf) {
+		AmigaDebugLogf("Could not open %s for quick save\n", path);
+		return;
+	}
+	if (!mCoreSaveStateNamed(core, vf, SAVESTATE_ALL)) {
+		AmigaDebugLogf("Quick save to %s failed\n", path);
+	}
+	vf->close(vf);
+}
+
+static void _quickLoad(struct mCore* core, const char* romPath) {
+	char path[PATH_MAX + 8];
+	snprintf(path, sizeof(path), "%s.ss%d", romPath, AMIGA_QUICK_SAVE_SLOT);
+	struct VFile* vf = VFileOpen(path, O_RDONLY);
+	if (!vf) {
+		AmigaDebugLogf("No quick save to load at %s\n", path);
+		return;
+	}
+	if (!mCoreLoadStateNamed(core, vf, SAVESTATE_ALL)) {
+		AmigaDebugLogf("Quick load from %s failed\n", path);
+	}
+	vf->close(vf);
+}
+
+/* Same reasoning as the quick-save slot above: mCoreTakeScreenshot()
+ * (the auto-numbering convenience wrapper) is also ENABLE_DIRECTORIES-
+ * gated, so this calls mCoreTakeScreenshotVF() directly on a VFile
+ * this frontend opens itself. One fixed name (overwriting any previous
+ * screenshot) rather than mCoreTakeScreenshot()'s own numbered-suffix
+ * scan -- simpler, and good enough for "grab the current frame". */
+static void _quickScreenshot(struct mCore* core, const char* romPath) {
+	char path[PATH_MAX + 8];
+	snprintf(path, sizeof(path), "%s.png", romPath);
+	struct VFile* vf = VFileOpen(path, O_CREAT | O_TRUNC | O_RDWR);
+	if (!vf) {
+		AmigaDebugLogf("Could not open %s for screenshot\n", path);
+		return;
+	}
+	if (!mCoreTakeScreenshotVF(core, vf)) {
+		AmigaDebugLogf("Screenshot to %s failed\n", path);
+	}
+	vf->close(vf);
+}
+
 /* The original (and still default, when a ROM path is given on the
  * command line) frontend: load exactly that ROM and run it, with the
  * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
@@ -232,6 +297,15 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 		return 1;
 	}
 
+	/* The quick-save/load/screenshot helpers above need the currently
+	 * loaded ROM's own path to build a sibling filename from -- tracked
+	 * here (not re-derived from the core) since mCore itself doesn't
+	 * keep the path it was loaded from around. */
+	char romPath[PATH_MAX];
+	strncpy(romPath, args->fname, sizeof(romPath) - 1);
+	romPath[sizeof(romPath) - 1] = '\0';
+
+	bool paused = false;
 	bool quit = false;
 	while (!quit) {
 		quit = VideoRTGShouldQuit();
@@ -260,7 +334,14 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 				 * re-resolve against the new ROM's own content size
 				 * anyway (a platform change, or SGB border toggling, can
 				 * change what the best fit even is). */
-				_loadRom(&core, &opts, path, args, fullscreen, VideoRTGRequestedScale());
+				if (_loadRom(&core, &opts, path, args, fullscreen, VideoRTGRequestedScale())) {
+					strncpy(romPath, path, sizeof(romPath) - 1);
+					romPath[sizeof(romPath) - 1] = '\0';
+					/* A fresh ROM is never paused, regardless of whatever
+					 * state the previous one was left in. */
+					paused = false;
+					MenuSetPaused(VideoRTGWindow(), false);
+				}
 				free(path);
 			}
 			break;
@@ -268,6 +349,38 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 		case MENU_ACTION_ABOUT:
 			MenuShowAbout(VideoRTGWindow());
 			break;
+		case MENU_ACTION_RESET:
+			core->reset(core);
+			break;
+		case MENU_ACTION_PAUSE:
+			paused = !paused;
+			MenuSetPaused(VideoRTGWindow(), paused);
+			break;
+		case MENU_ACTION_QUICK_SAVE:
+			_quickSave(core, romPath);
+			break;
+		case MENU_ACTION_QUICK_LOAD:
+			_quickLoad(core, romPath);
+			break;
+		case MENU_ACTION_SCREENSHOT:
+			_quickScreenshot(core, romPath);
+			break;
+		case MENU_ACTION_TOGGLE_FULLSCREEN: {
+			bool wasFullscreen = fullscreen;
+			fullscreen = !fullscreen;
+			if (!VideoRTGReopen(fullscreen, VideoRTGRequestedScale())) {
+				/* VideoRTGReopen() tears down whatever was open before
+				 * attempting the new state, so a failure here (e.g.
+				 * fullscreen Auto hitting the Z3660 synthesized-CUSTOM-
+				 * mode limitation documented in VideoRTGReopen()'s own
+				 * fullscreen branch) would otherwise leave no window at
+				 * all. Revert to the state that was working a moment
+				 * ago instead of leaving the app stuck windowless. */
+				fullscreen = wasFullscreen;
+				VideoRTGReopen(fullscreen, VideoRTGRequestedScale());
+			}
+			break;
+		}
 		case MENU_ACTION_SCALE_1X:
 		case MENU_ACTION_SCALE_2X:
 		case MENU_ACTION_SCALE_3X:
@@ -277,7 +390,13 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 			 * parameter already gives it. */
 			static const int kScaleForAction[] = { 1, 2, 3, 0 };
 			int newScale = kScaleForAction[action - MENU_ACTION_SCALE_1X];
-			VideoRTGReopen(fullscreen, newScale);
+			/* VideoRTGScale() is always resolved (never 0/Auto), so this
+			 * is a real, known-working scale to fall back to -- same
+			 * revert-on-failure reasoning as Toggle Fullscreen above. */
+			int oldScale = VideoRTGScale();
+			if (!VideoRTGReopen(fullscreen, newScale)) {
+				VideoRTGReopen(fullscreen, oldScale);
+			}
 			break;
 		}
 		default:
@@ -287,8 +406,14 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 			break;
 		}
 
-		core->setKeys(core, VideoRTGKeys() | GamepadKeys());
-		core->runFrame(core);
+		/* Paused: skip advancing the emulated machine, but keep blitting
+		 * (and keep polling IDCMP/menu above) so the window stays
+		 * responsive and the last real frame stays visible rather than
+		 * freezing mid-draw. */
+		if (!paused) {
+			core->setKeys(core, VideoRTGKeys() | GamepadKeys());
+			core->runFrame(core);
+		}
 		VideoRTGBlit();
 	}
 

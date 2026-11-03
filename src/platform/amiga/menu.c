@@ -41,19 +41,35 @@ static struct Menu* s_menuStrip;
  * menu title* (1x=0, 2x=1, 3x=2, Auto=3), not its index in this whole
  * array. */
 static struct NewMenu s_menuDef[] = {
-	{ NM_TITLE, (CONST_STRPTR) "Project",     NULL,      0,                 0,  NULL },
-	{ NM_ITEM,  (CONST_STRPTR) "Open ROM...", (CONST_STRPTR) "O", COMMSEQ,   0,  USERDATA(MENU_ACTION_OPEN_ROM) },
-	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,   NULL,      0,                 0,  NULL },
-	{ NM_ITEM,  (CONST_STRPTR) "About mGBA",  NULL,      0,                 0,  USERDATA(MENU_ACTION_ABOUT) },
-	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,   NULL,      0,                 0,  NULL },
-	{ NM_ITEM,  (CONST_STRPTR) "Quit mGBA",   (CONST_STRPTR) "Q", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUIT) },
-	{ NM_TITLE, (CONST_STRPTR) "Settings",    NULL,      0,                 0,  NULL },
-	{ NM_ITEM,  (CONST_STRPTR) "1x",          NULL,      CHECKIT,           ~1, USERDATA(MENU_ACTION_SCALE_1X) },
-	{ NM_ITEM,  (CONST_STRPTR) "2x",          NULL,      CHECKIT,           ~2, USERDATA(MENU_ACTION_SCALE_2X) },
-	{ NM_ITEM,  (CONST_STRPTR) "3x",          NULL,      CHECKIT,           ~4, USERDATA(MENU_ACTION_SCALE_3X) },
-	{ NM_ITEM,  (CONST_STRPTR) "Auto",        NULL,      CHECKIT | CHECKED, ~8, USERDATA(MENU_ACTION_SCALE_AUTO) },
-	{ NM_END,   NULL,                         NULL,      0,                 0,  NULL },
+	{ NM_TITLE, (CONST_STRPTR) "Project",          NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Open ROM...",      (CONST_STRPTR) "O", COMMSEQ,   0,  USERDATA(MENU_ACTION_OPEN_ROM) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Reset",            (CONST_STRPTR) "R", COMMSEQ,   0,  USERDATA(MENU_ACTION_RESET) },
+	/* Pause is a plain independent toggle (CHECKIT, no nm_MutualExclude
+	 * bits set) -- not part of the scale group below, which is a
+	 * mutually-exclusive set. */
+	{ NM_ITEM,  (CONST_STRPTR) "Pause",            (CONST_STRPTR) "P", COMMSEQ | CHECKIT, 0, USERDATA(MENU_ACTION_PAUSE) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Quick Save",       (CONST_STRPTR) "S", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUICK_SAVE) },
+	{ NM_ITEM,  (CONST_STRPTR) "Quick Load",       (CONST_STRPTR) "L", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUICK_LOAD) },
+	{ NM_ITEM,  (CONST_STRPTR) "Screenshot",       NULL,      0,                 0,  USERDATA(MENU_ACTION_SCREENSHOT) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "About mGBA",       NULL,      0,                 0,  USERDATA(MENU_ACTION_ABOUT) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Quit mGBA",        (CONST_STRPTR) "Q", COMMSEQ,   0,  USERDATA(MENU_ACTION_QUIT) },
+	{ NM_TITLE, (CONST_STRPTR) "Settings",         NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "1x",               NULL,      CHECKIT,           ~1, USERDATA(MENU_ACTION_SCALE_1X) },
+	{ NM_ITEM,  (CONST_STRPTR) "2x",               NULL,      CHECKIT,           ~2, USERDATA(MENU_ACTION_SCALE_2X) },
+	{ NM_ITEM,  (CONST_STRPTR) "3x",               NULL,      CHECKIT,           ~4, USERDATA(MENU_ACTION_SCALE_3X) },
+	{ NM_ITEM,  (CONST_STRPTR) "Auto",             NULL,      CHECKIT | CHECKED, ~8, USERDATA(MENU_ACTION_SCALE_AUTO) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Toggle Fullscreen", NULL,     0,                 0,  USERDATA(MENU_ACTION_TOGGLE_FULLSCREEN) },
+	{ NM_END,   NULL,                              NULL,      0,                 0,  NULL },
 };
+
+/* Index of "1x" in s_menuDef above -- MenuInit()'s own pre-selection
+ * loop needs this; keep in sync with the array if its layout changes. */
+#define SCALE_ITEM_FIRST 14
 
 static int _scaleToIndex(int scale) {
 	switch (scale) {
@@ -74,7 +90,7 @@ bool MenuInit(struct Window* window, int currentScale) {
 	 * rather than building with the array's own default (Auto) and
 	 * immediately following up with a ClearMenuStrip/ResetMenuStrip. */
 	int selected = _scaleToIndex(currentScale);
-	int scaleItemFirst = 7; /* index of "1x" in s_menuDef, see array above */
+	int scaleItemFirst = SCALE_ITEM_FIRST;
 	int i;
 	for (i = 0; i < 4; ++i) {
 		if (i == selected) {
@@ -164,6 +180,25 @@ void MenuSetScale(struct Window* window, int scale) {
 		} else {
 			item->Flags &= ~CHECKED;
 		}
+	}
+	ResetMenuStrip(window, s_menuStrip);
+}
+
+void MenuSetPaused(struct Window* window, bool paused) {
+	if (!s_menuStrip) {
+		return;
+	}
+
+	struct MenuItem* item = _findItemByAction(MENU_ACTION_PAUSE);
+	if (!item) {
+		return;
+	}
+
+	ClearMenuStrip(window);
+	if (paused) {
+		item->Flags |= CHECKED;
+	} else {
+		item->Flags &= ~CHECKED;
 	}
 	ResetMenuStrip(window, s_menuStrip);
 }

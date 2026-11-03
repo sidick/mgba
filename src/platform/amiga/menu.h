@@ -19,12 +19,18 @@
 enum MenuAction {
 	MENU_ACTION_NONE = 0,
 	MENU_ACTION_OPEN_ROM,
+	MENU_ACTION_RESET,
+	MENU_ACTION_PAUSE,
+	MENU_ACTION_QUICK_SAVE,
+	MENU_ACTION_QUICK_LOAD,
+	MENU_ACTION_SCREENSHOT,
 	MENU_ACTION_ABOUT,
 	MENU_ACTION_QUIT,
 	MENU_ACTION_SCALE_1X,
 	MENU_ACTION_SCALE_2X,
 	MENU_ACTION_SCALE_3X,
 	MENU_ACTION_SCALE_AUTO,
+	MENU_ACTION_TOGGLE_FULLSCREEN,
 };
 
 /* Opens gadtools.library, builds the menu strip, and attaches it to
@@ -50,6 +56,13 @@ enum MenuAction MenuDispatch(UWORD code);
  * for CHECKED-only changes between calls. No-op if MenuInit() hasn't
  * succeeded. */
 void MenuSetScale(struct Window* window, int scale);
+
+/* Updates the Project menu's "Pause" checkmark to match `paused`,
+ * the same ClearMenuStrip/mutate/ResetMenuStrip fast path
+ * MenuSetScale() already uses -- Pause isn't part of any mutually-
+ * exclusive group (unlike scale), so this just flips its own CHECKED
+ * flag in isolation. No-op if MenuInit() hasn't succeeded. */
+void MenuSetPaused(struct Window* window, bool paused);
 
 /* Opens the ASL "Open ROM" file requester (asl.library, opened on first
  * use). Returns a malloc'd path (caller frees) or NULL if cancelled or
