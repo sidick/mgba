@@ -29,9 +29,9 @@
  * it after this call, when a ROM is picked). */
 void AmigaGuiPlatformInit(struct mGUIRunner* runner);
 
-/* Frees what AmigaGuiPlatformInit() allocated (currently just
- * runner->params.font) -- called from the registered teardown callback,
- * not meant to be called directly except by that callback itself. */
+/* Frees what AmigaGuiPlatformInit() allocated (runner->params.font and
+ * the GUI canvas) -- called from the registered teardown callback, not
+ * meant to be called directly except by that callback itself. */
 void AmigaGuiPlatformDeinit(struct mGUIRunner* runner);
 
 #endif

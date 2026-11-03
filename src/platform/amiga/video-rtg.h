@@ -91,6 +91,14 @@ struct Window* VideoRTGWindow(void);
 bool VideoRTGFullscreen(void);
 int VideoRTGScale(void);
 
+/* The real on-screen pixel size of the window/screen's own content area
+ * -- s_contentWidth/Height * s_scale, exactly what VideoRTGBlit()/
+ * VideoRTGBlitCanvas() already compute internally. For a caller (e.g.
+ * gui-platform.c's GUI canvas) that wants to render at the window's own
+ * native resolution instead of a fixed logical size scaled up to fit --
+ * see that file's own comment on why. */
+void VideoRTGWindowContentSize(int* width, int* height);
+
 /* The menu action (see menu.h) picked since the last call, or
  * MENU_ACTION_NONE if none -- set by VideoRTGShouldQuit()'s IDCMP_MENUPICK
  * handling. Destructive read: calling this resets it to MENU_ACTION_NONE,

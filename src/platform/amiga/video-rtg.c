@@ -517,6 +517,16 @@ int VideoRTGScale(void) {
 	return s_scale;
 }
 
+void VideoRTGWindowContentSize(int* width, int* height) {
+	/* Exactly what VideoRTGBlit()/VideoRTGBlitCanvas() already compute
+	 * internally as scaledWidth/scaledHeight -- the real on-screen pixel
+	 * size of the window/screen's own content area (not counting the
+	 * fullscreen centering margin, which is real but deliberately never
+	 * drawn into). */
+	*width = s_contentWidth * s_scale;
+	*height = s_contentHeight * s_scale;
+}
+
 void VideoRTGDeinit(void) {
 	MenuDeinit(s_window);
 	if (s_window) {

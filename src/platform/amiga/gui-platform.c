@@ -34,16 +34,51 @@
  * GBA_VIDEO_HORIZONTAL_PIXELS (240) with this frontend's deliberately
  * oversized "2x" font (gui-font.c, chosen for legibility over the
  * original 1x bitmap font) -- confirmed live: title and clock text
- * visibly overlapped at native GBA resolution. The menu/browser canvas
- * is a separate, fixed size instead -- 2x GBA resolution, matching the
- * font's own natural size and much closer to what every other port
- * actually works with -- entirely decoupled from VideoRTGBuffer() (the
- * GBA core's own native-resolution output), scaled to fit the window at
- * blit time via VideoRTGBlitCanvas(). */
-#define GUI_CANVAS_WIDTH (GBA_VIDEO_HORIZONTAL_PIXELS * 2)
-#define GUI_CANVAS_HEIGHT (GBA_VIDEO_VERTICAL_PIXELS * 2)
-
+ * visibly overlapped at native GBA resolution. An earlier version of
+ * this file used a fixed 2x-GBA-resolution canvas scaled up to fit the
+ * window; this one instead renders the menu at the window's own real,
+ * native size (VideoRTGWindowContentSize(), video-rtg.h) -- the same
+ * resolution every other gui-runner.c platform already works at,
+ * crisp with no extra scale pass of its own -- and leaves the GBA
+ * core's own native-resolution gameplay frame (s_coreBuffer) as the
+ * only thing that still needs scaling, via _blitFaded()'s own
+ * ScaleNearestFit() call. Entirely decoupled from VideoRTGBuffer()
+ * either way. Resized (_resizeCanvas()) whenever the window's own size
+ * changes -- at AmigaGuiPlatformInit() time and again from
+ * _incrementScreenMode() after it reopens the window at a new scale.
+ * Small windows (e.g. a 1x GB window, 160x144) can still be too narrow
+ * for the menu layout to avoid the same title/clock collision -- a
+ * known, accepted trade-off of rendering at the real window size rather
+ * than enforcing an artificial minimum. */
 static uint16_t* s_guiCanvas;
+static int s_canvasWidth;
+static int s_canvasHeight;
+
+static void _resizeCanvas(struct mGUIRunner* runner) {
+	int width, height;
+	VideoRTGWindowContentSize(&width, &height);
+	if (width == s_canvasWidth && height == s_canvasHeight && s_guiCanvas) {
+		return;
+	}
+
+	uint16_t* canvas = calloc((size_t) width * height, sizeof(uint16_t));
+	if (!canvas) {
+		/* Keep the old (wrongly-sized, but real) canvas rather than
+		 * leave s_guiCanvas NULL -- a stretched/cropped menu beats a
+		 * crash from every other function here assuming it's non-NULL. */
+		return;
+	}
+	free(s_guiCanvas);
+	s_guiCanvas = canvas;
+	s_canvasWidth = width;
+	s_canvasHeight = height;
+
+	GUIFontSetTarget(s_guiCanvas, s_canvasWidth, s_canvasHeight, s_canvasWidth);
+	if (runner) {
+		runner->params.width = s_canvasWidth;
+		runner->params.height = s_canvasHeight;
+	}
+}
 
 /* Set by _pollInput() (below), read by _running() -- see that pair's
  * own comments for why pumping the window's IDCMP queue belongs in
@@ -68,11 +103,11 @@ static void _drawStart(void) {
 	 * glyphs/icons it actually needs this frame, so stale content
 	 * from a differently laid-out previous frame would otherwise
 	 * remain on screen. */
-	memset(s_guiCanvas, 0, GUI_CANVAS_WIDTH * GUI_CANVAS_HEIGHT * sizeof(uint16_t));
+	memset(s_guiCanvas, 0, (size_t) s_canvasWidth * s_canvasHeight * sizeof(uint16_t));
 }
 
 static void _drawEnd(void) {
-	VideoRTGBlitCanvas(s_guiCanvas, GUI_CANVAS_WIDTH, GUI_CANVAS_HEIGHT);
+	VideoRTGBlitCanvas(s_guiCanvas, s_canvasWidth, s_canvasHeight);
 }
 
 /* GUIPollInput() (mgba-util/gui.c) calls params.pollInput on every
@@ -134,29 +169,28 @@ static uint16_t _fadeHalf(uint16_t v) {
 	return (uint16_t) (r | (g << 5) | (b << 11));
 }
 
-/* Native-GBA-resolution staging area: faded (or not) here first, then
- * 2x-upscaled (exactly GUI_CANVAS_WIDTH/HEIGHT's own ratio to
- * GBA_VIDEO_HORIZONTAL/VERTICAL_PIXELS -- a clean integer scale,
- * ScaleNearest() rather than ScaleNearestFit()) into s_guiCanvas. Fading
- * at native size first and letting the scale pass replicate already-
- * faded pixel values is simpler than fading GUI_CANVAS_WIDTH *
- * GUI_CANVAS_HEIGHT pixels on every call. */
-static uint16_t s_frameStaging[GBA_VIDEO_HORIZONTAL_PIXELS * GBA_VIDEO_VERTICAL_PIXELS];
+/* Native-content-resolution staging area: faded (or not) here first,
+ * then fit (ScaleNearestFit() -- s_guiCanvas is the window's own real
+ * size now, not a fixed, conveniently-integer multiple of content size
+ * the way the old fixed 2x canvas was) into s_guiCanvas. Fading at
+ * native size first and letting the scale pass replicate already-faded
+ * pixel values is simpler than fading the whole (possibly much larger)
+ * canvas on every call. Sized for AMIGA_VIDEO_MAX_HEIGHT (video-rtg.h)
+ * -- the same ceiling s_coreBuffer and VideoRTGBuffer() itself use --
+ * since the loaded core's real content size (GBA_KEY_* 240x160, GB
+ * 160x144, SGB-with-border 256x224) isn't known until this file's own
+ * callers query it. */
+static uint16_t s_frameStaging[AMIGA_VIDEO_STRIDE * AMIGA_VIDEO_MAX_HEIGHT];
 
 /* Row-by-row rather than one flat copy: src can be padded to a stride
  * wider than `width` -- true for s_coreBuffer (AMIGA_VIDEO_STRIDE,
- * wider than GBA_VIDEO_HORIZONTAL_PIXELS of real content) but not for
- * _drawScreenshot's tightly-packed `pixels` (srcStride == width there).
- * Both callers' width/height are always GBA_VIDEO_HORIZONTAL/
- * VERTICAL_PIXELS in practice (s_coreBuffer always is; a save state's
- * stored screenshot is mCoreLoadState's own GBA-native size) -- not
- * defensively checked against GUI_CANVAS_WIDTH/HEIGHT's fixed 2x
- * capacity, since both are this file's own internal callers. */
+ * usually wider than the real content) but not for _drawScreenshot's
+ * tightly-packed `pixels` (srcStride == width there). */
 static void _blitFaded(const uint16_t* src, unsigned srcStride, unsigned width, unsigned height, bool faded) {
 	unsigned y;
 	for (y = 0; y < height; ++y) {
 		const uint16_t* srcRow = &src[y * srcStride];
-		uint16_t* stageRow = &s_frameStaging[y * GBA_VIDEO_HORIZONTAL_PIXELS];
+		uint16_t* stageRow = &s_frameStaging[y * AMIGA_VIDEO_STRIDE];
 		if (!faded) {
 			memcpy(stageRow, srcRow, width * sizeof(uint16_t));
 			continue;
@@ -166,28 +200,46 @@ static void _blitFaded(const uint16_t* src, unsigned srcStride, unsigned width, 
 			stageRow[x] = _fadeHalf(srcRow[x]);
 		}
 	}
-	ScaleNearest(s_frameStaging, GBA_VIDEO_HORIZONTAL_PIXELS, (int) width, (int) height, s_guiCanvas, GUI_CANVAS_WIDTH, 2);
+	ScaleNearestFit(s_frameStaging, AMIGA_VIDEO_STRIDE, (int) width, (int) height,
+		s_guiCanvas, s_canvasWidth, s_canvasWidth, s_canvasHeight);
 }
 
 static void _setup(struct mGUIRunner* runner) {
 	if (!s_coreBuffer) {
-		s_coreBuffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
+		/* Same AMIGA_VIDEO_MAX_HEIGHT ceiling as s_frameStaging/
+		 * VideoRTGBuffer() itself -- whatever core ends up loaded (GBA,
+		 * GB, GBC) simply uses less of it. */
+		s_coreBuffer = calloc((size_t) AMIGA_VIDEO_STRIDE * AMIGA_VIDEO_MAX_HEIGHT, sizeof(uint16_t));
 	}
 	/* core->setVideoBuffer(), not VideoRTGBuffer() -- see s_coreBuffer's
-	 * own comment above for why the two must stay separate. */
+	 * own comment above for why the two must stay separate. Must run
+	 * before gui-runner.c's own core->reset() call right after this
+	 * returns -- same constraint main.c's _bindVideoBuffer() documents
+	 * (src/gb/core.c's own reset only associates its video renderer with
+	 * a buffer that's already bound). gui-runner.c already calls setup()
+	 * before reset() in its own sequence, so no extra ordering care is
+	 * needed here beyond that existing contract. */
 	runner->core->setVideoBuffer(runner->core, s_coreBuffer, AMIGA_VIDEO_STRIDE);
 }
 
 static void _drawFrame(struct mGUIRunner* runner, bool faded) {
-	UNUSED(runner);
-	_blitFaded(s_coreBuffer, AMIGA_VIDEO_STRIDE, GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS, faded);
+	/* Real content size, not a hardcoded GBA assumption -- same
+	 * currentVideoSize() main.c's own _sizeForCore() uses, and same
+	 * caveat: only answers correctly once core->reset() has actually
+	 * run (see that function's own comment) -- true here, since
+	 * drawFrame() is only ever called from gui-runner.c's main gameplay
+	 * loop, well after setup()+reset(). */
+	unsigned width, height;
+	runner->core->currentVideoSize(runner->core, &width, &height);
+	_blitFaded(s_coreBuffer, AMIGA_VIDEO_STRIDE, width, height, faded);
 }
 
 static void _drawScreenshot(struct mGUIRunner* runner, const mColor* pixels, unsigned width, unsigned height, bool faded) {
 	UNUSED(runner);
 	/* A save state's stored screenshot -- same mColor pixel type as
-	 * s_coreBuffer, just not padded to AMIGA_VIDEO_STRIDE (it's exactly
-	 * width*height, mCoreLoadState's own GBA_VIDEO_HORIZONTAL_PIXELS). */
+	 * s_coreBuffer, just not padded to AMIGA_VIDEO_STRIDE (exactly
+	 * width*height, the core's own content size at the time it was
+	 * saved -- width/height are given explicitly here, not assumed). */
 	_blitFaded(pixels, width, width, height, faded);
 }
 
@@ -216,10 +268,13 @@ static bool _running(struct mGUIRunner* runner) {
  * reachable from the native Settings menu, which doesn't have that
  * ambiguity (it tracks its own last-picked item). */
 static void _incrementScreenMode(struct mGUIRunner* runner) {
-	UNUSED(runner);
 	int current = VideoRTGScale();
 	int next = (current >= 1 && current <= 3) ? (current % 3) + 1 : 1;
 	VideoRTGReopen(VideoRTGFullscreen(), next);
+	/* The window just changed size -- resize the GUI canvas to match, so
+	 * the pause overlay's next redraw uses the new size too, not a
+	 * stretched/cropped stale one. */
+	_resizeCanvas(runner);
 }
 
 static void _teardown(struct mGUIRunner* runner) {
@@ -241,13 +296,8 @@ static struct GUIInputKeys s_keySources[] = {
 };
 
 void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
-	if (!s_guiCanvas) {
-		s_guiCanvas = calloc((size_t) GUI_CANVAS_WIDTH * GUI_CANVAS_HEIGHT, sizeof(uint16_t));
-	}
-	GUIFontSetTarget(s_guiCanvas, GUI_CANVAS_WIDTH, GUI_CANVAS_HEIGHT, GUI_CANVAS_WIDTH);
+	_resizeCanvas(runner);
 
-	runner->params.width = GUI_CANVAS_WIDTH;
-	runner->params.height = GUI_CANVAS_HEIGHT;
 	runner->params.font = GUIFontCreate();
 	/* SYS: always exists on a booted system (unlike e.g. a specific DHn:
 	 * volume, which may not), so it's a safe universal starting point
@@ -309,4 +359,6 @@ void AmigaGuiPlatformDeinit(struct mGUIRunner* runner) {
 	runner->params.font = NULL;
 	free(s_guiCanvas);
 	s_guiCanvas = NULL;
+	s_canvasWidth = 0;
+	s_canvasHeight = 0;
 }
