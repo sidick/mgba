@@ -29,6 +29,8 @@ static uint16_t* s_buffer;
 static uint16_t* s_swapped;
 static uint16_t* s_scaledOutput;
 static int s_scale;
+static int s_blitX;
+static int s_blitY;
 static uint32_t s_keys;
 
 /* Keyboard-only for now (no joystick/gamepad support yet -- see
@@ -177,10 +179,28 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			}
 		}
 
+		/* The chosen mode's own real geometry, not necessarily equal to
+		 * scaledWidth/scaledHeight -- an explicit -S (or an auto-picked
+		 * mode scale doesn't divide evenly into) can leave real margin.
+		 * Opening the screen/window at the mode's full size and blitting
+		 * our content centered within it (below) means that margin reads
+		 * as a deliberate black border around the picture rather than an
+		 * arbitrary unfilled corner. */
+		unsigned screenWidth = (unsigned) p96GetModeIDAttr(id, P96IDA_WIDTH);
+		unsigned screenHeight = (unsigned) p96GetModeIDAttr(id, P96IDA_HEIGHT);
+		if (screenWidth < scaledWidth) {
+			screenWidth = scaledWidth;
+		}
+		if (screenHeight < scaledHeight) {
+			screenHeight = scaledHeight;
+		}
+		s_blitX = (int) ((screenWidth - scaledWidth) / 2);
+		s_blitY = (int) ((screenHeight - scaledHeight) / 2);
+
 		s_screen = p96OpenScreenTags(
 			P96SA_DisplayID, id,
-			P96SA_Width, scaledWidth,
-			P96SA_Height, scaledHeight,
+			P96SA_Width, screenWidth,
+			P96SA_Height, screenHeight,
 			P96SA_Depth, 16,
 			P96SA_Title, (ULONG) "mGBA",
 			P96SA_Quiet, TRUE,
@@ -195,8 +215,8 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			WA_Borderless, TRUE,
 			WA_Activate, TRUE,
 			WA_RMBTrap, TRUE,
-			WA_Width, scaledWidth,
-			WA_Height, scaledHeight,
+			WA_Width, screenWidth,
+			WA_Height, screenHeight,
 			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
 			TAG_DONE);
 	} else {
@@ -209,6 +229,11 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 				return false;
 			}
 		}
+
+		/* No screen margin to center within -- the window is always
+		 * opened at exactly the content size. */
+		s_blitX = 0;
+		s_blitY = 0;
 
 		s_window = OpenWindowTags(NULL,
 			WA_PubScreenName, (ULONG) "Workbench",
@@ -250,12 +275,12 @@ void VideoRTGBlit(void) {
 			s_scaledOutput, scaledWidth, s_scale);
 		ri.Memory = s_scaledOutput;
 		ri.BytesPerRow = scaledWidth * sizeof(uint16_t);
-		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft, s_window->BorderTop,
+		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft + s_blitX, s_window->BorderTop + s_blitY,
 			scaledWidth, GBA_VIDEO_VERTICAL_PIXELS * s_scale);
 	} else {
 		ri.Memory = s_swapped;
 		ri.BytesPerRow = AMIGA_VIDEO_STRIDE * sizeof(uint16_t);
-		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft, s_window->BorderTop,
+		p96WritePixelArray(&ri, 0, 0, s_window->RPort, s_window->BorderLeft + s_blitX, s_window->BorderTop + s_blitY,
 			GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
 	}
 }
