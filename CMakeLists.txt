@@ -1105,7 +1105,8 @@ if(DEFINED AMIGA)
 	# see src/platform/amiga/video-rtg.c for the video path.
 	add_executable(${BINARY_NAME}-amiga
 		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/main.c
-		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c)
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/video-rtg.c
+		${CMAKE_CURRENT_SOURCE_DIR}/src/platform/amiga/gamepad.c)
 	target_link_libraries(${BINARY_NAME}-amiga ${PLATFORM_LIBRARY} ${BINARY_NAME})
 	target_compile_definitions(${BINARY_NAME}-amiga PRIVATE "${OS_DEFINES};${FEATURE_DEFINES};${FUNCTION_DEFINES}")
 endif()

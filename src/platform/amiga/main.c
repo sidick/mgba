@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "gamepad.h"
 #include "video-rtg.h"
 
 #include <mgba/core/config.h>
@@ -29,7 +30,10 @@
 	"  Cursor keys      D-pad\n" \
 	"  X / Z            A / B\n" \
 	"  A / S            L / R\n" \
-	"  Return / Backspace  Start / Select"
+	"  Return / Backspace  Start / Select\n" \
+	"\n" \
+	"A joystick/CD32 pad/USB gamepad (via Poseidon) on the port printed\n" \
+	"\"2\" is read too -- see src/platform/amiga/gamepad.c for the mapping."
 
 struct AmigaOpts {
 	bool fullscreen;
@@ -95,9 +99,14 @@ static int _realMain(int argc, char** argv) {
 		return 1;
 	}
 
+	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
+	 * input alone is still a fully working frontend. */
+	GamepadInit();
+
 	struct mCore* core = mCoreFind(args.fname);
 	if (!core) {
 		fprintf(stderr, "Could not find a core to run %s\n", args.fname);
+		GamepadDeinit();
 		VideoRTGDeinit();
 		mArgumentsDeinit(&args);
 		return 1;
@@ -123,7 +132,7 @@ static int _realMain(int argc, char** argv) {
 		if (quit) {
 			break;
 		}
-		core->setKeys(core, VideoRTGKeys());
+		core->setKeys(core, VideoRTGKeys() | GamepadKeys());
 		core->runFrame(core);
 		VideoRTGBlit();
 	}
@@ -133,6 +142,7 @@ static int _realMain(int argc, char** argv) {
 	core->unloadROM(core);
 	core->deinit(core);
 
+	GamepadDeinit();
 	VideoRTGDeinit();
 	mArgumentsDeinit(&args);
 	mLogSetDefaultLogger(NULL);
