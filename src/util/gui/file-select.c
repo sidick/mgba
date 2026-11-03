@@ -85,9 +85,19 @@ static bool _refreshDirectory(struct GUIParams* params, const char* currentPath,
 			continue;
 		}
 		if (de->type(de) == VFS_DIRECTORY) {
-			size_t len = strlen(name) + 2;
+			size_t nameLen = strlen(name);
+			/* A name already ending in its own separator (an AmigaDOS
+			 * volume entry's own trailing ':', e.g. "MGBA:" -- see
+			 * vfs-dirent.c's __amigaos__ volume-list branch) is already
+			 * a complete, directly-openable path on its own; appending
+			 * PATH_SEP too would produce "MGBA:/", which, unlike a
+			 * plain directory name's cosmetic "Name/", AmigaDOS can't
+			 * actually open (there's no name between the ':' and the
+			 * '/' for it to resolve). */
+			bool alreadyTerminated = nameLen && (name[nameLen - 1] == *PATH_SEP || name[nameLen - 1] == ':');
+			size_t len = nameLen + (alreadyTerminated ? 1 : 2);
 			char* n2 = malloc(len);
-			snprintf(n2, len, "%s/", name);
+			snprintf(n2, len, alreadyTerminated ? "%s" : "%s/", name);
 			name = n2;
 		} else if (filterName && !filterName(name)) {
 			continue;
@@ -194,7 +204,16 @@ bool GUISelectFile(struct GUIParams* params, char* outPath, size_t outLen, bool 
 			} else {
 				size_t len = strlen(params->currentPath);
 				const char* sep = PATH_SEP;
-				if (!len || params->currentPath[len - 1] == *sep) {
+				/* A trailing ':' is already a complete separator on its own
+				 * (an AmigaDOS/Windows volume root, e.g. "SYS:" or "C:") --
+				 * joining with PATH_SEP too would insert a bogus extra
+				 * slash right after it ("SYS:/Name"), which AmigaDOS's own
+				 * path parser doesn't accept the way POSIX tolerates a
+				 * doubled "/". Every directory entry's own title already
+				 * carries ITS OWN trailing PATH_SEP too (see the VFS_DIRECTORY
+				 * branch above), so the join only ever needs at most one
+				 * separator in between, never both. */
+				if (!len || params->currentPath[len - 1] == *sep || params->currentPath[len - 1] == ':') {
 					sep = "";
 				}
 				snprintf(outPath, outLen, "%s%s%s", params->currentPath, sep, item->title);

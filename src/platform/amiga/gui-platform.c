@@ -299,11 +299,18 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 	_resizeCanvas(runner);
 
 	runner->params.font = GUIFontCreate();
-	/* SYS: always exists on a booted system (unlike e.g. a specific DHn:
-	 * volume, which may not), so it's a safe universal starting point
-	 * for the ROM browser -- the user navigates to wherever their ROMs
-	 * actually live from there. */
-	runner->params.basePath = "SYS:";
+	/* Empty, not "SYS:" -- AmigaDOS has no single filesystem root the
+	 * way POSIX has "/": SYS:, a game's own MGBA: host mount, RAM:, and
+	 * any other mounted volume all sit side by side with nothing above
+	 * them. VDirOpen("") (vfs-dirent.c's own __amigaos__ branch) returns
+	 * a real "every mounted volume" listing for this case, the same way
+	 * Wii's VDeviceList() already stands in for a root on a system with
+	 * multiple memory-card/USB mounts -- so basePath being empty here
+	 * means "Up" from any one volume's own top level (e.g. SYS:) lands
+	 * back on that volume list instead of being stuck with nowhere to
+	 * go, which hardcoding one specific volume as basePath otherwise
+	 * leaves no way to reach. */
+	runner->params.basePath = "";
 	runner->params.drawStart = _drawStart;
 	runner->params.drawEnd = _drawEnd;
 	runner->params.pollInput = _pollInput;
@@ -313,12 +320,13 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 	runner->params.guiFinish = _guiFinish;
 	runner->params.getText = _getText;
 	/* mGUIInit()'s own GUIInit(&runner->params) call (gui-runner.c) ran
-	 * before AmigaGuiPlatformInit() was reached, i.e. before basePath
-	 * above had a real value -- GUIInit() copies basePath into
-	 * currentPath once, so without this second call the ROM browser
-	 * would start from an empty currentPath instead of "SYS:". Cheap
-	 * and otherwise idempotent (just clears inputHistory and re-copies
-	 * basePath -> currentPath). */
+	 * before AmigaGuiPlatformInit() was reached -- GUIInit() copies
+	 * basePath into currentPath once, clears inputHistory, otherwise a
+	 * no-op given basePath is already "" by this struct's own zero-init.
+	 * Kept for the same reason the font/path fields above are still set
+	 * explicitly here rather than relied on being zeroed: this function,
+	 * not main.c's struct literal, is the one place that actually owns
+	 * what the ROM browser starts from. */
 	GUIInit(&runner->params);
 
 	/* mGUIInit() (gui-runner.c) already called mInputMapInit() on this
