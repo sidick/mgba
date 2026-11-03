@@ -23,9 +23,16 @@
  *
  * `scale` is an integer pixel-replication factor (see scale.h) applied to
  * the whole GBA_VIDEO_HORIZONTAL_PIXELS x GBA_VIDEO_VERTICAL_PIXELS output
- * -- the window/screen is opened at exactly `scale` times that size, not
- * clamped or auto-fit to any larger mode the hardware might support.
- * Passing 1 behaves exactly as before (no scaling pass, no extra buffer). */
+ * -- the window/screen is opened at exactly `scale` times that size. A
+ * positive value is used exactly as given, with no further auto-fit.
+ * Zero means "auto": in fullscreen mode, enumerate real display modes
+ * (not a p96BestModeIDTags nominal-size request, which some drivers --
+ * Z3660 observed -- will happily fabricate a CUSTOM mode for rather than
+ * reporting what the board/monitor actually supports) and pick the
+ * largest integer scale that fits the biggest one found; in windowed
+ * mode zero just means the fixed default of 1, since there's no screen
+ * of our own to measure. Passing 1 behaves exactly as before scaling
+ * existed (no scaling pass, no extra buffer). */
 bool VideoRTGInit(bool fullscreen, int scale);
 
 /* The buffer to pass to core->setVideoBuffer(core, buffer, AMIGA_VIDEO_STRIDE).

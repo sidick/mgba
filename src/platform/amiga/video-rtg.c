@@ -83,28 +83,62 @@ static void _blitSwapBytes(void) {
 	}
 }
 
+/* Enumerates real display modes (not the synthetic "closest fit" a
+ * p96BestModeIDTags nominal-size request can fabricate on some drivers --
+ * seen in practice on Z3660, which happily invents a CUSTOM mode of
+ * whatever exact size is asked for, rather than reporting back what the
+ * board/monitor can actually do) and returns the one with the largest
+ * pixel area, plus the largest integer GBA-resolution scale that fits
+ * inside it. Returns false if P96 reports no usable mode at all. */
+static bool _pickAutoScaleMode(ULONG* outId, int* outScale) {
+	struct List* modes = p96AllocModeListTags(
+		P96MA_MinWidth, GBA_VIDEO_HORIZONTAL_PIXELS,
+		P96MA_MinHeight, GBA_VIDEO_VERTICAL_PIXELS,
+		P96MA_MinDepth, 16,
+		P96MA_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
+		TAG_DONE);
+	if (!modes) {
+		return false;
+	}
+
+	bool found = false;
+	ULONG bestId = 0;
+	UWORD bestWidth = 0;
+	UWORD bestHeight = 0;
+	struct P96Mode* mode;
+	for (mode = (struct P96Mode*) modes->lh_Head; mode->Node.ln_Succ; mode = (struct P96Mode*) mode->Node.ln_Succ) {
+		if ((ULONG) mode->Width * mode->Height > (ULONG) bestWidth * bestHeight) {
+			bestId = mode->DisplayID;
+			bestWidth = mode->Width;
+			bestHeight = mode->Height;
+			found = true;
+		}
+	}
+	p96FreeModeList(modes);
+
+	if (!found) {
+		return false;
+	}
+	*outId = bestId;
+	*outScale = ScaleBestFit(GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS, bestWidth, bestHeight);
+	return true;
+}
+
 bool VideoRTGInit(bool fullscreen, int scale) {
+	/* scale == 0 means "auto": fullscreen picks the largest integer fit
+	 * for the best available mode (resolved below, once P96 is open);
+	 * windowed has no screen of its own to measure, so auto there just
+	 * means the previous fixed default of 1. */
+	bool autoScale = fullscreen && scale == 0;
 	if (scale < 1) {
 		scale = 1;
 	}
-	s_scale = scale;
-	unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * scale;
-	unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * scale;
 
 	s_keys = 0;
 	s_buffer = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	s_swapped = calloc(AMIGA_VIDEO_STRIDE * GBA_VIDEO_VERTICAL_PIXELS, sizeof(uint16_t));
 	if (!s_buffer || !s_swapped) {
 		return false;
-	}
-	if (s_scale > 1) {
-		/* Owned entirely by us (not core->setVideoBuffer()'s stride
-		 * convention), so no AMIGA_VIDEO_STRIDE-style padding needed --
-		 * exactly scaledWidth pixels per row. */
-		s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
-		if (!s_scaledOutput) {
-			return false;
-		}
 	}
 
 	P96Base = OpenLibrary(P96NAME, 2);
@@ -113,14 +147,34 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 	}
 
 	if (fullscreen) {
-		ULONG id = p96BestModeIDTags(
-			P96BIDTAG_NominalWidth, scaledWidth,
-			P96BIDTAG_NominalHeight, scaledHeight,
-			P96BIDTAG_Depth, 16,
-			P96BIDTAG_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
-			TAG_DONE);
-		if (id == (ULONG) INVALID_ID) {
-			return false;
+		ULONG id;
+		if (autoScale) {
+			if (!_pickAutoScaleMode(&id, &scale)) {
+				return false;
+			}
+		} else {
+			id = p96BestModeIDTags(
+				P96BIDTAG_NominalWidth, GBA_VIDEO_HORIZONTAL_PIXELS * scale,
+				P96BIDTAG_NominalHeight, GBA_VIDEO_VERTICAL_PIXELS * scale,
+				P96BIDTAG_Depth, 16,
+				P96BIDTAG_FormatsAllowed, RGBFF_HICOLOR | RGBFF_TRUECOLOR,
+				TAG_DONE);
+			if (id == (ULONG) INVALID_ID) {
+				return false;
+			}
+		}
+
+		s_scale = scale;
+		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
+		unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+		if (s_scale > 1) {
+			/* Owned entirely by us (not core->setVideoBuffer()'s stride
+			 * convention), so no AMIGA_VIDEO_STRIDE-style padding needed
+			 * -- exactly scaledWidth pixels per row. */
+			s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
+			if (!s_scaledOutput) {
+				return false;
+			}
 		}
 
 		s_screen = p96OpenScreenTags(
@@ -146,6 +200,16 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
 			TAG_DONE);
 	} else {
+		s_scale = scale;
+		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
+		unsigned scaledHeight = GBA_VIDEO_VERTICAL_PIXELS * s_scale;
+		if (s_scale > 1) {
+			s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
+			if (!s_scaledOutput) {
+				return false;
+			}
+		}
+
 		s_window = OpenWindowTags(NULL,
 			WA_PubScreenName, (ULONG) "Workbench",
 			WA_Title, (ULONG) "mGBA",

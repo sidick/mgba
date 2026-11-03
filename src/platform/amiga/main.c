@@ -26,9 +26,12 @@
 #define AMIGA_USAGE \
 	"Amiga frontend options:\n" \
 	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window\n" \
-	"  -S SCALE         Integer pixel-doubling scale (default 1); the window/\n" \
-	"                   screen opens at exactly SCALE times GBA resolution --\n" \
-	"                   not auto-fit to a larger mode the hardware might support\n" \
+	"  -S SCALE         Integer pixel-doubling scale. Fullscreen (-F) default:\n" \
+	"                   auto -- picks the largest scale that fits the best\n" \
+	"                   available RTG mode. Windowed default: 1 (never auto-\n" \
+	"                   maximizes into the desktop). An explicit SCALE opens\n" \
+	"                   the window/screen at exactly that multiple of GBA\n" \
+	"                   resolution either way, with no further auto-fit.\n" \
 	"\n" \
 	"Keyboard mapping:\n" \
 	"  Cursor keys      D-pad\n" \
@@ -86,7 +89,7 @@ static int _realMain(int argc, char** argv) {
 	s_logger.d.filter->defaultLevels = mLOG_FATAL | mLOG_ERROR;
 	mLogSetDefaultLogger(&s_logger.d);
 
-	struct AmigaOpts amigaOpts = { false, 1 };
+	struct AmigaOpts amigaOpts = { false, 0 };
 	struct mSubParser subparser = {
 		.usage = AMIGA_USAGE,
 		.parse = _parseAmigaOpts,
