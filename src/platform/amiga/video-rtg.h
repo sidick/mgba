@@ -91,6 +91,18 @@ struct Window* VideoRTGWindow(void);
 bool VideoRTGFullscreen(void);
 int VideoRTGScale(void);
 
+/* The scale value most recently passed to VideoRTGInit()/VideoRTGReopen(),
+ * before any resolving -- 0 if that call meant "auto", unlike
+ * VideoRTGScale()'s own always-resolved answer. A caller that wants to
+ * re-apply the user's own last choice across something else changing
+ * (e.g. main.c's "Open ROM..." loading a different ROM, possibly a
+ * different platform entirely) should reopen with this, not
+ * VideoRTGScale() -- reusing VideoRTGScale()'s resolved number would
+ * silently drop "Auto" in favor of whatever fixed number it last
+ * happened to resolve to, even though the user never asked for a fixed
+ * number. */
+int VideoRTGRequestedScale(void);
+
 /* The real on-screen pixel size of the window/screen's own content area
  * -- s_contentWidth/Height * s_scale, exactly what VideoRTGBlit()/
  * VideoRTGBlitCanvas() already compute internally. For a caller (e.g.

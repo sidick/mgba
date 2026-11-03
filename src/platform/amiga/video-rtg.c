@@ -30,6 +30,7 @@ static uint16_t* s_buffer;
 static uint16_t* s_swapped;
 static uint16_t* s_scaledOutput;
 static int s_scale;
+static int s_requestedScale;
 static int s_blitX;
 static int s_blitY;
 static bool s_fullscreen;
@@ -207,6 +208,11 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 	}
 	free(s_scaledOutput);
 	s_scaledOutput = NULL;
+
+	/* Remembered as the caller's own request, before any of the
+	 * resolving below -- see VideoRTGRequestedScale()'s own comment for
+	 * why this is tracked separately from s_scale/VideoRTGScale(). */
+	s_requestedScale = scale;
 
 	/* scale == 0 means "auto": fullscreen picks the largest integer fit
 	 * for the best available mode (resolved below); windowed has no
@@ -515,6 +521,10 @@ bool VideoRTGFullscreen(void) {
 
 int VideoRTGScale(void) {
 	return s_scale;
+}
+
+int VideoRTGRequestedScale(void) {
+	return s_requestedScale;
 }
 
 void VideoRTGWindowContentSize(int* width, int* height) {

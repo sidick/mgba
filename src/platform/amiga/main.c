@@ -250,13 +250,17 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 				/* _loadRom() detects the new file's own platform and
 				 * recreates the core if it differs from the current one
 				 * (a GBA core can't just be handed a GB ROM, or vice
-				 * versa) -- see its own comment. Keeps the window at its
-				 * current scale (VideoRTGScale()) rather than re-running
-				 * auto-detection, so swapping ROMs doesn't surprise the
-				 * user with a resized window unless the new ROM's own
-				 * resolution actually differs (a platform change, or an
-				 * SGB border toggling). */
-				_loadRom(&core, &opts, path, args, fullscreen, VideoRTGScale());
+				 * versa) -- see its own comment. Reopens at
+				 * VideoRTGRequestedScale() (the user's own last explicit
+				 * choice -- 0 for Auto), not VideoRTGScale() (the
+				 * resolved number): reusing the resolved number would
+				 * silently turn "Auto" into a fixed scale the first time
+				 * the user swaps ROMs, even though they never asked for
+				 * a fixed number -- and "Auto" genuinely wants to
+				 * re-resolve against the new ROM's own content size
+				 * anyway (a platform change, or SGB border toggling, can
+				 * change what the best fit even is). */
+				_loadRom(&core, &opts, path, args, fullscreen, VideoRTGRequestedScale());
 				free(path);
 			}
 			break;
