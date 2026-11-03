@@ -219,6 +219,15 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 			WA_Height, screenHeight,
 			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
 			TAG_DONE);
+		if (s_window && (s_blitX > 0 || s_blitY > 0)) {
+			/* Plain black for now -- P96's own default background
+			 * otherwise shows through the margin left by a scale that
+			 * doesn't evenly fill the mode. A bevel/border here is a
+			 * natural follow-up, not done yet. Filled once: our own
+			 * per-frame blit never touches anything outside the centered
+			 * content rect, so this never needs redrawing. */
+			p96RectFill(s_window->RPort, 0, 0, (LONG) screenWidth - 1, (LONG) screenHeight - 1, 0xFF000000);
+		}
 	} else {
 		s_scale = scale;
 		unsigned scaledWidth = GBA_VIDEO_HORIZONTAL_PIXELS * s_scale;
