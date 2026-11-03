@@ -14,6 +14,7 @@
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
 #include <mgba/feature/commandline.h>
+#include <mgba-util/vfs.h>
 
 #include <stdlib.h>
 
@@ -111,36 +112,98 @@ static struct mLogger* s_logger;
  * whatever VideoRTGScale() last resolved to -- re-resolving "auto"
  * against the real (possibly smaller) content size can land on a larger
  * integer scale than GBA's own assumed size would have. */
+/* core->reset()'s own GB implementation only associates the video
+ * renderer with the core's video subsystem if a buffer was already set
+ * (`if (gbcore->renderer.outputBuffer) { ... }`, src/gb/core.c) -- call
+ * this BEFORE core->reset(), or the core runs with no renderer wired up
+ * at all (it'll still execute, just never produce a frame). The pointer
+ * itself never changes across a later VideoRTGReopen() (same fixed
+ * VideoRTGBuffer() allocation regardless of content size), so there's
+ * no need to call this again after a resize. */
+static void _bindVideoBuffer(struct mCore* core) {
+	core->setVideoBuffer(core, VideoRTGBuffer(), AMIGA_VIDEO_STRIDE);
+}
+
+/* core->currentVideoSize() only answers correctly once core->reset() has
+ * actually run: GBModel detection from the ROM header (including a Super
+ * Game Boy ROM's own border-eligibility) happens there, not at
+ * mCoreLoadFile() -- beforehand, gb->model is still GB_MODEL_AUTODETECT
+ * (0xFF, mgba/gb/interface.h), which has every model bit set including
+ * GB_MODEL_SGB, so a query before reset() always takes
+ * _GBCoreCurrentVideoSize()'s SGB-bordered branch regardless of the
+ * ROM's real type -- confirmed live: a plain non-SGB ROM query before
+ * reset() came back 256x224 (SGB's own size) instead of the correct
+ * 160x144. So this runs AFTER core->reset(), resizing only the window
+ * (VideoRTGReopen() never touches the already-bound buffer pointer, see
+ * _bindVideoBuffer()'s own comment -- same mechanism the Settings menu's
+ * live scale change already relies on). */
 static void _sizeForCore(struct mCore* core, bool fullscreen, int scale) {
 	unsigned width, height;
 	core->currentVideoSize(core, &width, &height);
 	VideoRTGSetContentSize((int) width, (int) height);
 	VideoRTGReopen(fullscreen, scale);
-	core->setVideoBuffer(core, VideoRTGBuffer(), AMIGA_VIDEO_STRIDE);
 }
 
-/* The original (and still default, when a ROM path is given on the
- * command line) frontend: load exactly that ROM and run it, with the
- * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
- * About/scale -- no on-screen GUI at all. Unchanged by the addition of
- * _runBrowser() below. */
-static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
-	struct mCore* core = mCoreFind(args->fname);
-	if (!core) {
-		AmigaDebugLogf("Could not find a core to run %s\n", args->fname);
-		return 1;
+/* Loads `path` into *corePtr, creating or replacing the core as needed --
+ * unlike a plain core->unloadROM()+mCoreLoadFile() reload (fine for same-
+ * platform ROM swaps, but silently wrong for a GBA core handed a GB ROM
+ * or vice versa), this detects the new file's actual platform first
+ * (mCoreIsCompatible() on a quick VFile peek, not the heavier mCoreFind()
+ * -- this runs on every "Open ROM...", not just once at startup) and only
+ * reuses *corePtr when it already matches. On a platform change (or the
+ * very first call, *corePtr == NULL), the old core (if any) is fully torn
+ * down -- config included, since struct mCoreOptions/mCore are matched
+ * pairs -- and a fresh one built from scratch via mCoreCreate(), with the
+ * same config/defaults setup _runDirect() used to do once at startup
+ * inline. *opts is the matching struct mCoreOptions for *corePtr -- freed
+ * and rebuilt alongside it on a platform change, left alone on a same-
+ * platform reload. Returns false (nothing changed) if the file isn't a
+ * ROM this build recognizes at all. */
+static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const char* path, struct mArguments* args, bool fullscreen, int scale) {
+	struct VFile* vf = VFileOpen(path, O_RDONLY);
+	enum mPlatform platform = vf ? mCoreIsCompatible(vf) : mPLATFORM_NONE;
+	if (vf) {
+		vf->close(vf);
+	}
+	if (platform == mPLATFORM_NONE) {
+		AmigaDebugLogf("Could not find a core to run %s\n", path);
+		return false;
 	}
 
+	struct mCore* core = *corePtr;
+	if (core && core->platform(core) == platform) {
+		core->unloadROM(core);
+		mCoreLoadFile(core, path);
+		_bindVideoBuffer(core);
+		core->reset(core);
+		_sizeForCore(core, fullscreen, scale);
+		return true;
+	}
+
+	struct mCore* newCore = mCoreCreate(platform);
+	if (!newCore) {
+		AmigaDebugLogf("Could not create a core to run %s\n", path);
+		return false;
+	}
+	if (core) {
+		mCoreConfigFreeOpts(opts);
+		mCoreConfigDeinit(&core->config);
+		core->unloadROM(core);
+		core->deinit(core);
+	}
+
+	core = newCore;
+	*corePtr = core;
 	core->init(core);
-	mCoreLoadFile(core, args->fname);
-	_sizeForCore(core, fullscreen, scale);
+	mCoreLoadFile(core, path);
+	_bindVideoBuffer(core);
 	mCoreConfigInit(&core->config, "amiga");
 	mCoreConfigLoad(&core->config);
 
-	struct mCoreOptions opts = {};
-	mCoreConfigMap(&core->config, &opts);
+	*opts = (struct mCoreOptions) {};
+	mCoreConfigMap(&core->config, opts);
 	mArgumentsApply(args, NULL, 0, &core->config);
-	mCoreConfigLoadDefaults(&core->config, &opts);
+	mCoreConfigLoadDefaults(&core->config, opts);
 	/* Matches src/platform/test/perf-main.c's own default: "detect" finds
 	 * idle busy-wait loops in guest code at runtime, unlike the GBA core's
 	 * own built-in default ("remove"), which mostly needs a matching
@@ -153,6 +216,21 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 	mCoreLoadConfig(core);
 
 	core->reset(core);
+	_sizeForCore(core, fullscreen, scale);
+	return true;
+}
+
+/* The original (and still default, when a ROM path is given on the
+ * command line) frontend: load exactly that ROM and run it, with the
+ * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
+ * About/scale -- no on-screen GUI at all. Unchanged by the addition of
+ * _runBrowser() below. */
+static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
+	struct mCore* core = NULL;
+	struct mCoreOptions opts = {};
+	if (!_loadRom(&core, &opts, args->fname, args, fullscreen, scale)) {
+		return 1;
+	}
 
 	bool quit = false;
 	while (!quit) {
@@ -169,23 +247,16 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale) {
 		case MENU_ACTION_OPEN_ROM: {
 			char* path = MenuOpenROM(VideoRTGWindow());
 			if (path) {
-				/* Same mCore object reused for the new ROM -- correct for
-				 * same-platform ROM switches (the common case), but not a
-				 * real platform re-detection: a GBA core handed a GB ROM
-				 * (or vice versa) here would misbehave. Re-detecting via
-				 * mCoreFind() and recreating the core entirely would fix
-				 * that properly; not done here -- a bigger, separate
-				 * change, and a pre-existing limitation of this menu item,
-				 * not something this resolution work introduces. Keeps the
-				 * window at its current scale (VideoRTGScale()) rather
-				 * than re-running auto-detection, so swapping ROMs doesn't
-				 * surprise the user with a resized window unless the new
-				 * ROM's own resolution actually differs (SGB border vs
-				 * not, say). */
-				core->unloadROM(core);
-				mCoreLoadFile(core, path);
-				_sizeForCore(core, fullscreen, VideoRTGScale());
-				core->reset(core);
+				/* _loadRom() detects the new file's own platform and
+				 * recreates the core if it differs from the current one
+				 * (a GBA core can't just be handed a GB ROM, or vice
+				 * versa) -- see its own comment. Keeps the window at its
+				 * current scale (VideoRTGScale()) rather than re-running
+				 * auto-detection, so swapping ROMs doesn't surprise the
+				 * user with a resized window unless the new ROM's own
+				 * resolution actually differs (a platform change, or an
+				 * SGB border toggling). */
+				_loadRom(&core, &opts, path, args, fullscreen, VideoRTGScale());
 				free(path);
 			}
 			break;
