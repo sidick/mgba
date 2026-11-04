@@ -30,7 +30,7 @@
  * reachable either way -- the native Project menu's "Quit mGBA" (both
  * modes) or the ROM browser's own menu, as well as the window's close
  * gadget in windowed mode. */
-#define AMIGA_OPTIONS "FS:"
+#define AMIGA_OPTIONS "FS:A:"
 #define AMIGA_USAGE \
 	"Amiga frontend options:\n" \
 	"  ROM              Optional. Without one, opens mgba's ROM browser/\n" \
@@ -44,6 +44,12 @@
 	"                   maximizes into the desktop). An explicit SCALE opens\n" \
 	"                   the window/screen at exactly that multiple of GBA\n" \
 	"                   resolution either way, with no further auto-fit.\n" \
+	"  -A UNIT          AHI device unit to open (0-3). Default: AHI's own\n" \
+	"                   default unit. Each unit has its own independently-\n" \
+	"                   configured audio mode/driver in SYS:Prefs/AHI, so this\n" \
+	"                   lets you target a specific one (e.g. a unit known to\n" \
+	"                   be set to Paula) instead of whatever the system\n" \
+	"                   default happens to be.\n" \
 	"\n" \
 	"Keyboard mapping (loading a ROM directly):\n" \
 	"  Cursor keys      D-pad\n" \
@@ -71,9 +77,26 @@
  * cards' own mode tables (and memory) long before this matters. */
 #define AMIGA_MAX_SCALE 16
 
+/* AHI's own device units (0-3, plus AHI_NO_UNIT -- see devices/ahi.h)
+ * each carry an independently-configured audio mode/driver preference
+ * via SYS:Prefs/AHI's own per-unit settings. CMD_WRITE itself has no
+ * way to pick a specific audio mode/driver (confirmed from AHI's own
+ * autodocs -- that's deliberately the system's job), but the *unit*
+ * number IS something OpenDevice() takes directly, so exposing it here
+ * is the one real lever this frontend has for "target a specific
+ * configured output chain" without reimplementing AHI's own
+ * Preferences editor. Only 0-3 are real, persistently-configurable
+ * units; AHI_NO_UNIT (255) is for low-level-only access this frontend
+ * doesn't use, so it's not accepted here. */
+#define AMIGA_MAX_AHI_UNIT 3
+
 struct AmigaOpts {
 	bool fullscreen;
 	int scale;
+	/* -1 means "not given" -- AmigaAudioInit() treats that as
+	 * AHI_DEFAULT_UNIT itself (devices/ahi.h isn't included here, to
+	 * keep AHI specifics inside audio-ahi.c). */
+	int ahiUnit;
 };
 
 static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* arg) {
@@ -89,6 +112,14 @@ static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* a
 			return false;
 		}
 		opts->scale = scale;
+		return true;
+	}
+	case 'A': {
+		int unit = atoi(arg);
+		if (unit < 0 || unit > AMIGA_MAX_AHI_UNIT) {
+			return false;
+		}
+		opts->ahiUnit = unit;
 		return true;
 	}
 	default:
@@ -477,7 +508,7 @@ static int _realMain(int argc, char** argv) {
 	s_logger = AmigaDebugLoggerInit();
 	mLogSetDefaultLogger(s_logger);
 
-	struct AmigaOpts amigaOpts = { false, 0 };
+	struct AmigaOpts amigaOpts = { false, 0, -1 };
 	struct mSubParser subparser = {
 		.usage = AMIGA_USAGE,
 		.parse = _parseAmigaOpts,
@@ -525,7 +556,7 @@ static int _realMain(int argc, char** argv) {
 	 * emulator still emulates. Must run before _runDirect()/_runBrowser()
 	 * load any core, since AmigaAudioBindCore() (called from both) is a
 	 * no-op without this having succeeded first. */
-	AmigaAudioInit();
+	AmigaAudioInit(amigaOpts.ahiUnit);
 
 	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen, amigaOpts.scale) : _runBrowser();
 

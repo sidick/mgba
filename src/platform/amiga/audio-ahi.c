@@ -93,6 +93,7 @@ static struct {
 	volatile unsigned writeIndex; /* owned by the main process */
 	volatile unsigned readIndex;  /* owned by the audio process */
 	volatile unsigned sampleRate;
+	volatile int unit; /* AHI device unit to open -- set by AmigaAudioInit() before the process is spawned */
 	volatile bool quit;
 	volatile bool audioOk; /* set by the audio process before its ready signal */
 
@@ -145,7 +146,8 @@ static void _audioProcessEntry(void) {
 	bool deviceOpen = false;
 	if (reqA) {
 		reqA->ahir_Version = 4;
-		deviceOpen = !OpenDevice((CONST_STRPTR) AHINAME, AHI_DEFAULT_UNIT, (struct IORequest*) reqA, 0);
+		ULONG unit = s_shared.unit < 0 ? AHI_DEFAULT_UNIT : (ULONG) s_shared.unit;
+		deviceOpen = !OpenDevice((CONST_STRPTR) AHINAME, unit, (struct IORequest*) reqA, 0);
 	}
 	if (deviceOpen) {
 		/* ahidev.guide's own documented idiom for the second request of
@@ -280,9 +282,10 @@ static struct mAVStream s_stream = {
 	.postAudioBuffer = _postAudioBuffer,
 };
 
-bool AmigaAudioInit(void) {
+bool AmigaAudioInit(int unit) {
 	memset(&s_shared, 0, sizeof(s_shared));
 	s_shared.sampleRate = 44100;
+	s_shared.unit = unit;
 	s_shared.mainTask = FindTask(NULL);
 	s_shared.mainReadySig = AllocSignal(-1);
 	s_shared.mainFreeSig = AllocSignal(-1);

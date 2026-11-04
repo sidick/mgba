@@ -16,11 +16,18 @@ struct mCore;
  * startup, before any core exists -- unlike VideoRTGBuffer(), there's
  * nothing here that needs a loaded ROM first.
  *
+ * `unit` is the AHI device unit (0-3) to open -- each unit carries its
+ * own independently-configured audio mode/driver preference via
+ * SYS:Prefs/AHI, so this is how a caller targets a specific configured
+ * output chain (e.g. one known to be set to Paula) rather than
+ * whatever the system default happens to be. Pass a negative value
+ * (e.g. -1) for "not specified", which resolves to AHI_DEFAULT_UNIT.
+ *
  * Returns false (nothing audible, never fatal to the caller -- a
  * silent emulator still emulates) if ahi.device isn't available or the
  * audio process couldn't be started, the same "feature, not
  * requirement" convention GamepadInit()/VideoRTGInit() already use. */
-bool AmigaAudioInit(void);
+bool AmigaAudioInit(int unit);
 
 /* Wires this frontend's audio delivery (mAVStream's postAudioBuffer/
  * audioRateChanged hooks, core->setAudioBufferSize()) onto `core`.
