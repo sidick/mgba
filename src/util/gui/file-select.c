@@ -12,6 +12,20 @@
 
 #include <stdlib.h>
 
+/* A trailing ':' is a complete separator on its own only for an
+ * AmigaDOS volume root (e.g. "SYS:", "MGBA:" -- see vfs-dirent.c's
+ * __amigaos__ volume-list branch); a bare Windows drive-letter root
+ * ("C:") means something different from "C:/" (drive-relative vs.
+ * absolute), so this must not also fire there. Defined to a character
+ * no real path ever ends in on any other platform, so the two `== `
+ * checks below stay a single unconditional expression rather than a
+ * platform #ifdef in the middle of each one. */
+#ifdef __amigaos__
+#define VOLUME_ROOT_SEP ':'
+#else
+#define VOLUME_ROOT_SEP '\0'
+#endif
+
 #define ITERATION_SIZE 5
 #define SCANNING_THRESHOLD_1 50
 #ifdef __3DS__
@@ -94,7 +108,7 @@ static bool _refreshDirectory(struct GUIParams* params, const char* currentPath,
 			 * plain directory name's cosmetic "Name/", AmigaDOS can't
 			 * actually open (there's no name between the ':' and the
 			 * '/' for it to resolve). */
-			bool alreadyTerminated = nameLen && (name[nameLen - 1] == *PATH_SEP || name[nameLen - 1] == ':');
+			bool alreadyTerminated = nameLen && (name[nameLen - 1] == *PATH_SEP || name[nameLen - 1] == VOLUME_ROOT_SEP);
 			size_t len = nameLen + (alreadyTerminated ? 1 : 2);
 			char* n2 = malloc(len);
 			snprintf(n2, len, alreadyTerminated ? "%s" : "%s/", name);
@@ -204,16 +218,21 @@ bool GUISelectFile(struct GUIParams* params, char* outPath, size_t outLen, bool 
 			} else {
 				size_t len = strlen(params->currentPath);
 				const char* sep = PATH_SEP;
-				/* A trailing ':' is already a complete separator on its own
-				 * (an AmigaDOS/Windows volume root, e.g. "SYS:" or "C:") --
+				/* A trailing ':' is already a complete separator on its
+				 * own for an AmigaDOS volume root (e.g. "SYS:") --
 				 * joining with PATH_SEP too would insert a bogus extra
-				 * slash right after it ("SYS:/Name"), which AmigaDOS's own
-				 * path parser doesn't accept the way POSIX tolerates a
-				 * doubled "/". Every directory entry's own title already
-				 * carries ITS OWN trailing PATH_SEP too (see the VFS_DIRECTORY
-				 * branch above), so the join only ever needs at most one
+				 * slash right after it ("SYS:/Name"), which AmigaDOS's
+				 * own path parser doesn't accept the way POSIX tolerates
+				 * a doubled "/". VOLUME_ROOT_SEP (this file's own,
+				 * Amiga-only) is deliberately NOT ':' on other platforms
+				 * -- a bare Windows drive-letter root ("C:") means
+				 * something different from "C:/" (drive-relative vs.
+				 * absolute), so this must not also fire there. Every
+				 * directory entry's own title already carries ITS OWN
+				 * trailing PATH_SEP too (see the VFS_DIRECTORY branch
+				 * above), so the join only ever needs at most one
 				 * separator in between, never both. */
-				if (!len || params->currentPath[len - 1] == *sep || params->currentPath[len - 1] == ':') {
+				if (!len || params->currentPath[len - 1] == *sep || params->currentPath[len - 1] == VOLUME_ROOT_SEP) {
 					sep = "";
 				}
 				snprintf(outPath, outLen, "%s%s%s", params->currentPath, sep, item->title);

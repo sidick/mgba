@@ -234,27 +234,34 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 		unsigned scaledWidth = s_contentWidth * (unsigned) reuseScale;
 		unsigned scaledHeight = s_contentHeight * (unsigned) reuseScale;
 		if (scaledWidth <= s_screenWidth && scaledHeight <= s_screenHeight) {
-			free(s_scaledOutput);
-			s_scaledOutput = NULL;
-			s_scale = reuseScale;
-			if (s_scale > 1) {
-				s_scaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t));
-				if (!s_scaledOutput) {
-					return false;
-				}
+			/* Allocate into a local first and only commit s_scale/
+			 * s_scaledOutput together once it's known to have succeeded
+			 * -- a calloc failure here must NOT leave s_scale already
+			 * bumped with s_scaledOutput NULL while s_window is still
+			 * valid (this path never tears it down), or the next
+			 * VideoRTGBlit() call would scale into a NULL buffer. On
+			 * failure, fall through to the full teardown+reopen below
+			 * instead of returning early, so the module ends up in the
+			 * same safe (s_window NULL) failure state every other
+			 * allocation failure in this function already does. */
+			uint16_t* newScaledOutput = NULL;
+			if (reuseScale <= 1 || (newScaledOutput = calloc((size_t) scaledWidth * scaledHeight, sizeof(uint16_t)))) {
+				free(s_scaledOutput);
+				s_scaledOutput = newScaledOutput;
+				s_scale = reuseScale;
+				s_blitX = (int) ((s_screenWidth - scaledWidth) / 2);
+				s_blitY = (int) ((s_screenHeight - scaledHeight) / 2);
+				/* Re-fill the whole screen black, not just conditionally on
+				 * a margin existing this time -- the previous content's own
+				 * rect (a different size/position) may still have real
+				 * pixels anywhere the new, re-centered rect doesn't cover. */
+				p96RectFill(s_window->RPort, 0, 0, (LONG) s_screenWidth - 1, (LONG) s_screenHeight - 1, 0xFF000000);
+				/* ClearMenuStrip/mutate CHECKED/ResetMenuStrip, not a full
+				 * MenuDeinit()+MenuInit() -- the strip itself (and the
+				 * window it's attached to) isn't going anywhere. */
+				MenuSetScale(s_window, autoScale ? 0 : scale);
+				return true;
 			}
-			s_blitX = (int) ((s_screenWidth - scaledWidth) / 2);
-			s_blitY = (int) ((s_screenHeight - scaledHeight) / 2);
-			/* Re-fill the whole screen black, not just conditionally on
-			 * a margin existing this time -- the previous content's own
-			 * rect (a different size/position) may still have real
-			 * pixels anywhere the new, re-centered rect doesn't cover. */
-			p96RectFill(s_window->RPort, 0, 0, (LONG) s_screenWidth - 1, (LONG) s_screenHeight - 1, 0xFF000000);
-			/* ClearMenuStrip/mutate CHECKED/ResetMenuStrip, not a full
-			 * MenuDeinit()+MenuInit() -- the strip itself (and the
-			 * window it's attached to) isn't going anywhere. */
-			MenuSetScale(s_window, autoScale ? 0 : scale);
-			return true;
 		}
 	}
 
@@ -274,8 +281,6 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 	}
 	free(s_scaledOutput);
 	s_scaledOutput = NULL;
-
-	s_fullscreen = fullscreen;
 
 	if (fullscreen) {
 		ULONG id;
@@ -396,6 +401,15 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 	if (!s_window) {
 		return false;
 	}
+
+	/* Only committed once the window/screen is actually open -- every
+	 * early "return false" above now leaves s_fullscreen at whatever it
+	 * was before this call, instead of reflecting a failed attempt.
+	 * VideoRTGFullscreen() callers (e.g. a caller retrying with the
+	 * previous state after a failure) would otherwise see the *new*,
+	 * never-actually-opened mode and have no way to tell a genuine
+	 * success from a failed one. */
+	s_fullscreen = fullscreen;
 
 	/* Not fatal if this fails (missing/ancient gadtools.library): the
 	 * window still works, just without a menu. MenuInit()'s "currentScale"

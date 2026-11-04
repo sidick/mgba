@@ -228,8 +228,15 @@ char* MenuOpenROM(struct Window* window) {
 		path = malloc(512);
 		if (path) {
 			path[0] = '\0';
-			AddPart(path, fr->fr_Drawer, 512);
-			AddPart(path, fr->fr_File, 512);
+			/* AddPart() returns FALSE (rather than overflowing) if the
+			 * combined path wouldn't fit the given buffer size -- an
+			 * extremely long drawer+file path could leave `path`
+			 * incomplete rather than erroring out, but it's always a
+			 * safe, NUL-terminated string either way. */
+			if (!AddPart(path, fr->fr_Drawer, 512) || !AddPart(path, fr->fr_File, 512)) {
+				free(path);
+				path = NULL;
+			}
 		}
 	}
 	FreeAslRequest(fr);

@@ -51,6 +51,8 @@
  * sequence would leave between buffers. */
 #include "audio-ahi.h"
 
+#include "debug-log.h"
+
 #include <mgba/core/core.h>
 #include <mgba/core/interface.h>
 #include <mgba-util/audio-buffer.h>
@@ -110,6 +112,23 @@ static bool s_initialized;
 static bool s_muted;
 
 /* --- Audio process --- */
+
+/* A real AHI/driver failure mid-session (card unplugged, driver crash)
+ * would otherwise be entirely silent: WaitIO() still returns, and the
+ * loop would just keep queuing and "completing" writes into the void
+ * with nothing to notice. Logs the first failure only -- a wedged
+ * driver returning the same error on every single write (one every
+ * ~23ms) would otherwise flood the debug log without telling anyone
+ * anything new after the first line. */
+static void _logWriteErrorOnce(struct AHIRequest* req) {
+	static bool logged;
+	if (logged || !req->ahir_Std.io_Error) {
+		return;
+	}
+	logged = true;
+	AmigaDebugLogf("AHI CMD_WRITE failed, io_Error=%d (output may have silently stopped)\n",
+		(int) req->ahir_Std.io_Error);
+}
 
 static void _audioProcessEntry(void) {
 	s_shared.audioTask = FindTask(NULL);
@@ -171,6 +190,12 @@ static void _audioProcessEntry(void) {
 			req->ahir_Std.io_Data = slot->samples;
 			req->ahir_Std.io_Length = AMIGA_AUDIO_SAMPLES * 2 * sizeof(int16_t);
 			req->ahir_Std.io_Offset = 0;
+			/* CMD_WRITE's own RESULT doc: every field except io_Device/
+			 * io_Unit/io_Command is "trashed" by the previous completion
+			 * -- io_Flags included, even though nothing here reads it
+			 * back. Reset it explicitly rather than trust it's still 0
+			 * from CreateIORequest()/the struct copy. */
+			req->ahir_Std.io_Flags = 0;
 			req->ahir_Std.io_Message.mn_Node.ln_Pri = 0;
 			req->ahir_Type = AHIST_S16S;
 			req->ahir_Frequency = s_shared.sampleRate;
@@ -185,6 +210,7 @@ static void _audioProcessEntry(void) {
 			if (havePrev) {
 				struct AHIRequest* prevReq = reqs[1 - cur];
 				WaitIO((struct IORequest*) prevReq);
+				_logWriteErrorOnce(prevReq);
 				s_shared.slots[reqSlot[1 - cur]].full = false;
 				Signal(s_shared.mainTask, 1UL << s_shared.mainFreeSig);
 			}
@@ -196,6 +222,7 @@ static void _audioProcessEntry(void) {
 		if (havePrev) {
 			struct AHIRequest* prevReq = reqs[1 - cur];
 			WaitIO((struct IORequest*) prevReq);
+			_logWriteErrorOnce(prevReq);
 			s_shared.slots[reqSlot[1 - cur]].full = false;
 			Signal(s_shared.mainTask, 1UL << s_shared.mainFreeSig);
 		}

@@ -27,7 +27,7 @@
  * (e.g. "SYS:") as if it were the top of everything. */
 struct VDirEntryAmigaVol {
 	struct VDirEntry d;
-	char name[32 + 2]; /* AmigaDOS volume/device names: max 30 chars (BSTR length byte is a UBYTE, but real filesystems cap well under that) plus ':' and NUL. */
+	char name[255 + 2]; /* A BCPL BSTR's own length byte is a UBYTE, so 255 is the true protocol ceiling -- real AmigaDOS volume names are conventionally well under 32 chars, but sized to the real maximum rather than relying on that convention, plus ':' and NUL. */
 };
 
 struct VDirAmigaVolList {

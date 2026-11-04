@@ -180,8 +180,19 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 
 	struct mCore* core = *corePtr;
 	if (core && core->platform(core) == platform) {
-		core->unloadROM(core);
-		mCoreLoadFile(core, path);
+		/* No explicit unloadROM() call here -- mCoreLoadFile() already
+		 * does that itself, as its own first step. */
+		if (!mCoreLoadFile(core, path)) {
+			/* mCoreIsCompatible() above only sniffed the platform --
+			 * mCoreLoadFile() itself can still fail (truncated/corrupt
+			 * file, I/O error) and returns false when it does. Bail out
+			 * here, before touching video/audio binding or resetting a
+			 * core that has no ROM loaded -- *corePtr still points at
+			 * the same, now ROM-less but otherwise valid core, same as
+			 * if the caller had never asked to load anything. */
+			AmigaDebugLogf("Could not load %s\n", path);
+			return false;
+		}
 		_bindVideoBuffer(core);
 		AmigaAudioBindCore(core);
 		core->reset(core);
@@ -204,7 +215,12 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 	core = newCore;
 	*corePtr = core;
 	core->init(core);
-	mCoreLoadFile(core, path);
+	/* Checked below, after config setup -- not bailed out of early,
+	 * since *corePtr already points at this core and every later
+	 * _loadRom() call (success or failure) assumes it has an
+	 * initialized config to tear down/reuse. A failed load still
+	 * leaves a fully-formed, reusable, just ROM-less core. */
+	bool loaded = mCoreLoadFile(core, path);
 	_bindVideoBuffer(core);
 	AmigaAudioBindCore(core);
 	mCoreConfigInit(&core->config, "amiga");
@@ -225,6 +241,12 @@ static bool _loadRom(struct mCore** corePtr, struct mCoreOptions* opts, const ch
 	mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
 	mCoreLoadConfig(core);
 
+	if (!loaded) {
+		/* Same reasoning as the same-platform branch above: don't reset
+		 * or resize a core that has no ROM loaded. */
+		AmigaDebugLogf("Could not load %s\n", path);
+		return false;
+	}
 	core->reset(core);
 	_sizeForCore(core, fullscreen, scale);
 	return true;
