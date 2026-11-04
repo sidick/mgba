@@ -35,7 +35,9 @@
 	"Amiga frontend options:\n" \
 	"  ROM              Optional. Without one, opens mgba's ROM browser/\n" \
 	"                   settings GUI instead of loading a specific ROM.\n" \
-	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window\n" \
+	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window.\n" \
+	"                   Without -F, still used automatically if Workbench's own\n" \
+	"                   screen isn't a suitable HiColor/TrueColor RTG mode.\n" \
 	"  -S SCALE         Integer pixel-doubling scale. Fullscreen (-F) default:\n" \
 	"                   auto -- picks the largest scale that fits the best\n" \
 	"                   available RTG mode. Windowed default: 1 (never auto-\n" \
@@ -505,6 +507,16 @@ static int _realMain(int argc, char** argv) {
 		mArgumentsDeinit(&args);
 		return 1;
 	}
+	/* VideoRTGInit() may have silently upgraded a windowed request to
+	 * fullscreen on its own (Workbench's own screen wasn't a suitable
+	 * hicolor/truecolor mode to render into -- see its own comment).
+	 * Resync this local copy with whatever it actually decided, since
+	 * _runDirect()/_runBrowser() and every _loadRom()/VideoRTGReopen()
+	 * call below thread `amigaOpts.fullscreen` through as the current
+	 * state, not just the original request -- leaving it stale here
+	 * would fight the real state on every later reopen (e.g. a ROM
+	 * reload would keep passing "windowed" and force it back). */
+	amigaOpts.fullscreen = VideoRTGFullscreen();
 
 	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
 	 * input alone is still a fully working frontend. */

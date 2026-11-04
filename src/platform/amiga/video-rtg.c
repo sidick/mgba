@@ -173,6 +173,38 @@ static bool _pickAutoScaleMode(ULONG* outId, int* outScale) {
 	return true;
 }
 
+/* Windowed mode opens a plain Intuition window on the "Workbench"
+ * public screen (see the windowed branch of VideoRTGReopen() below) --
+ * it never creates its own screen the way fullscreen does. P96's own
+ * ARGB rendering calls (p96WritePixelArray/p96RectFill, which
+ * VideoRTGBlit() relies on) work on "any hicolor/truecolor rastport"
+ * per Picasso96's own docs, but NOT on a plain CLUT/planar one: if
+ * Workbench itself is sitting on a low native chipset mode (its
+ * default screenmode preference, or simply no RTG board/driver
+ * configured at all), writing a 16-bit RGB565 GBA frame into that
+ * RastPort would need palette remapping at best, or simply misrender.
+ * Detected once, at VideoRTGInit() time, so a caller can silently
+ * upgrade an unsuited windowed request to fullscreen (which opens its
+ * own dedicated, explicitly hicolor P96 screen regardless of whatever
+ * Workbench happens to be running on) instead of leaving the user with
+ * a broken-looking window. */
+static bool _workbenchNeedsFullscreen(void) {
+	struct Screen* wb = LockPubScreen((CONST_STRPTR) "Workbench");
+	if (!wb) {
+		/* No "Workbench" public screen at all is unusual enough that
+		 * second-guessing it here isn't worth it -- let the windowed
+		 * OpenWindowTags() attempt fail on its own terms instead. */
+		return false;
+	}
+	bool compatible = false;
+	if (p96GetBitMapAttr(wb->RastPort.BitMap, P96BMA_ISP96)) {
+		ULONG format = p96GetBitMapAttr(wb->RastPort.BitMap, P96BMA_RGBFORMAT);
+		compatible = ((1UL << format) & (RGBFF_HICOLOR | RGBFF_TRUECOLOR)) != 0;
+	}
+	UnlockPubScreen(NULL, wb);
+	return !compatible;
+}
+
 bool VideoRTGInit(bool fullscreen, int scale) {
 	s_keys = 0;
 	/* Allocated once for the whole process lifetime, not torn down by
@@ -193,6 +225,16 @@ bool VideoRTGInit(bool fullscreen, int scale) {
 	P96Base = OpenLibrary(P96NAME, 2);
 	if (!P96Base) {
 		return false;
+	}
+
+	/* A caller asking for windowed mode gets silently upgraded to
+	 * fullscreen if Workbench's own current screen couldn't actually
+	 * show our content correctly -- see _workbenchNeedsFullscreen()'s
+	 * own comment. An explicit -F request is left alone either way;
+	 * this only ever turns windowed into fullscreen, never the
+	 * reverse. */
+	if (!fullscreen && _workbenchNeedsFullscreen()) {
+		fullscreen = true;
 	}
 
 	return VideoRTGReopen(fullscreen, scale);
