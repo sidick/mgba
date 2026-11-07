@@ -30,26 +30,29 @@
  * reachable either way -- the native Project menu's "Quit mGBA" (both
  * modes) or the ROM browser's own menu, as well as the window's close
  * gadget in windowed mode. */
-#define AMIGA_OPTIONS "FS:A:"
+/* Fullscreen and scale are the shared mSubParserGraphicsInit() options
+ * (-f/--fullscreen, -1..-8/--scale) every other mgba port already uses
+ * -- see _realMain()'s graphics subparser below -- rather than this
+ * port rolling its own flag letters for the same two concepts. Only
+ * -A (AHI device unit) is genuinely Amiga-specific, so that's all this
+ * port's own subparser still handles. */
+#define AMIGA_OPTIONS "A:"
 #define AMIGA_USAGE \
 	"Amiga frontend options:\n" \
 	"  ROM              Optional. Without one, opens mgba's ROM browser/\n" \
 	"                   settings GUI instead of loading a specific ROM.\n" \
-	"  -F               Open fullscreen (a dedicated RTG screen) instead of a window.\n" \
-	"                   Without -F, still used automatically if Workbench's own\n" \
-	"                   screen isn't a suitable HiColor/TrueColor RTG mode.\n" \
-	"  -S SCALE         Integer pixel-doubling scale. Fullscreen (-F) default:\n" \
-	"                   auto -- picks the largest scale that fits the best\n" \
-	"                   available RTG mode. Windowed default: 1 (never auto-\n" \
-	"                   maximizes into the desktop). An explicit SCALE opens\n" \
-	"                   the window/screen at exactly that multiple of GBA\n" \
-	"                   resolution either way, with no further auto-fit.\n" \
 	"  -A UNIT          AHI device unit to open (0-3). Default: AHI's own\n" \
 	"                   default unit. Each unit has its own independently-\n" \
 	"                   configured audio mode/driver in SYS:Prefs/AHI, so this\n" \
 	"                   lets you target a specific one (e.g. a unit known to\n" \
 	"                   be set to Paula) instead of whatever the system\n" \
 	"                   default happens to be.\n" \
+	"\n" \
+	"Without -f, a window is still upgraded to fullscreen automatically if\n" \
+	"Workbench's own screen isn't a suitable HiColor/TrueColor RTG mode.\n" \
+	"Without --scale, fullscreen defaults to auto (the largest scale that\n" \
+	"fits the best available RTG mode); windowed defaults to 1x (never\n" \
+	"auto-maximizes into the desktop).\n" \
 	"\n" \
 	"Keyboard mapping (loading a ROM directly):\n" \
 	"  Cursor keys      D-pad\n" \
@@ -60,8 +63,8 @@
 	"Project menu (Right-Amiga shortcuts): Open ROM.../RA-O, Reset/RA-R,\n" \
 	"Pause/RA-P, Mute/RA-M, Quick Save/RA-S, Quick Load/RA-L, Screenshot,\n" \
 	"Quit/RA-Q. Settings menu: 1x/2x/3x/Auto scale, Toggle Fullscreen,\n" \
-	"Save Settings (remembers scale, fullscreen, and -A across runs --\n" \
-	"an explicit -F/-S/-A flag always overrides whatever was last saved).\n" \
+	"Save Settings (remembers scale, fullscreen, mute, and -A across runs --\n" \
+	"an explicit -f/--scale/-A flag always overrides whatever was last saved).\n" \
 	"Audio output (if any) goes wherever ahi.device is configured to --\n" \
 	"see SYS:Prefs/AHI to pick a different driver/card.\n" \
 	"\n" \
@@ -73,11 +76,6 @@
 	"\n" \
 	"A joystick/CD32 pad/USB gamepad (via Poseidon) on the port printed\n" \
 	"\"2\" is read too -- see src/platform/amiga/gamepad.c for the mapping."
-
-/* Upper bound purely as a sanity check against a typo/garbage argument --
- * not a hardware limit. A window/screen this large would exceed most RTG
- * cards' own mode tables (and memory) long before this matters. */
-#define AMIGA_MAX_SCALE 16
 
 /* AHI's own device units (0-3, plus AHI_NO_UNIT -- see devices/ahi.h)
  * each carry an independently-configured audio mode/driver preference
@@ -93,39 +91,20 @@
 #define AMIGA_MAX_AHI_UNIT 3
 
 struct AmigaOpts {
-	bool fullscreen;
-	int scale;
 	/* -1 means "not given" -- AmigaAudioInit() treats that as
 	 * AHI_DEFAULT_UNIT itself (devices/ahi.h isn't included here, to
 	 * keep AHI specifics inside audio-ahi.c). */
 	int ahiUnit;
-	/* Set by _parseAmigaOpts() when the matching flag was actually given
-	 * on the command line -- _realMain() only fills a field in from the
-	 * "Save Settings" menu's saved values (see AMIGA_SETTING_* below)
-	 * when its own flag was NOT given, so an explicit CLI flag always
-	 * wins over whatever was last saved. */
-	bool fullscreenGiven;
-	bool scaleGiven;
+	/* Set by _parseAmigaOpts() when -A was actually given on the command
+	 * line -- _realMain() only fills this in from the "Save Settings"
+	 * menu's saved value (see AMIGA_SETTING_* below) when it wasn't, so
+	 * an explicit CLI flag always wins over whatever was last saved. */
 	bool ahiUnitGiven;
 };
 
 static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* arg) {
 	struct AmigaOpts* opts = parser->opts;
 	switch (option) {
-	case 'F':
-		UNUSED(arg);
-		opts->fullscreen = true;
-		opts->fullscreenGiven = true;
-		return true;
-	case 'S': {
-		int scale = atoi(arg);
-		if (scale < 1 || scale > AMIGA_MAX_SCALE) {
-			return false;
-		}
-		opts->scale = scale;
-		opts->scaleGiven = true;
-		return true;
-	}
 	case 'A': {
 		int unit = atoi(arg);
 		if (unit < 0 || unit > AMIGA_MAX_AHI_UNIT) {
@@ -147,55 +126,80 @@ static bool _parseAmigaOpts(struct mSubParser* parser, int option, const char* a
  * everything else this port already stores there without colliding with
  * mCoreOptions' own generic keys (which this frontend's fullscreen/scale
  * don't map onto anyway -- VideoRTGInit() needs a decision before any
- * core/mCoreOptions exists at all). */
+ * core/mCoreOptions exists at all). fullscreen/scale here mirror the
+ * shared -f/--scale flags' own meaning (see AMIGA_OPTIONS's own comment
+ * above) rather than inventing Amiga-specific semantics for them. */
 #define AMIGA_SETTING_FULLSCREEN "amigaFullscreen"
 #define AMIGA_SETTING_SCALE "amigaScale"
 #define AMIGA_SETTING_AHI_UNIT "amigaAhiUnit"
+/* No CLI flag exists for mute (nor does any other mgba port expose one
+ * -- it's menu/UI-only everywhere), so this one is always loaded from
+ * whatever was last saved, with no "given on the command line" case to
+ * override it. */
+#define AMIGA_SETTING_MUTED "amigaMuted"
+
+/* The settings "Save Settings" persists and _realMain() resolves before
+ * VideoRTGInit()/AmigaAudioInit() need a final decision -- fullscreen
+ * and scale share the shared graphics subparser's own meaning (0
+ * scale/multiplier means "not given", same as that subparser's own
+ * default), ahiUnit is this port's own -A, and muted has no CLI flag at
+ * all (see AMIGA_SETTING_MUTED above). */
+struct AmigaSettings {
+	bool fullscreen;
+	int scale;
+	int ahiUnit;
+	bool muted;
+};
 
 /* Loads whatever "Save Settings" last wrote (if anything) into any of
- * `opts`' three fields whose matching flag was NOT given on the command
- * line this run -- an explicit CLI flag always overrides a saved value,
- * never the other way around. Uses its own, short-lived mCoreConfig
- * rather than a loaded ROM's: this runs in _realMain() before
- * VideoRTGInit()/AmigaAudioInit(), well before any core exists to hang
- * one off of. */
-static void _loadAmigaOpts(struct AmigaOpts* opts) {
+ * `settings`' fields whose matching flag was NOT given on the command
+ * line this run (muted has no such flag, so it's always loaded) -- an
+ * explicit CLI flag always overrides a saved value, never the other way
+ * around. Uses its own, short-lived mCoreConfig rather than a loaded
+ * ROM's: this runs in _realMain() before VideoRTGInit()/
+ * AmigaAudioInit(), well before any core exists to hang one off of. */
+static void _loadAmigaOpts(struct AmigaSettings* settings, bool fullscreenGiven, bool scaleGiven, bool ahiUnitGiven) {
 	struct mCoreConfig config;
 	mCoreConfigInit(&config, "amiga");
 	mCoreConfigLoad(&config);
 
-	if (!opts->fullscreenGiven) {
+	if (!fullscreenGiven) {
 		bool fullscreen;
 		if (mCoreConfigGetBoolValue(&config, AMIGA_SETTING_FULLSCREEN, &fullscreen)) {
-			opts->fullscreen = fullscreen;
+			settings->fullscreen = fullscreen;
 		}
 	}
-	if (!opts->scaleGiven) {
+	if (!scaleGiven) {
 		int scale;
-		if (mCoreConfigGetIntValue(&config, AMIGA_SETTING_SCALE, &scale) && scale >= 0 && scale <= AMIGA_MAX_SCALE) {
-			opts->scale = scale;
+		if (mCoreConfigGetIntValue(&config, AMIGA_SETTING_SCALE, &scale) && scale >= 0) {
+			settings->scale = scale;
 		}
 	}
-	if (!opts->ahiUnitGiven) {
+	if (!ahiUnitGiven) {
 		int ahiUnit;
 		if (mCoreConfigGetIntValue(&config, AMIGA_SETTING_AHI_UNIT, &ahiUnit) && ahiUnit >= -1 && ahiUnit <= AMIGA_MAX_AHI_UNIT) {
-			opts->ahiUnit = ahiUnit;
+			settings->ahiUnit = ahiUnit;
 		}
+	}
+	bool muted;
+	if (mCoreConfigGetBoolValue(&config, AMIGA_SETTING_MUTED, &muted)) {
+		settings->muted = muted;
 	}
 
 	mCoreConfigDeinit(&config);
 }
 
-/* The Settings menu's "Save Settings" action: writes the three values
+/* The Settings menu's "Save Settings" action: writes the four values
  * _loadAmigaOpts() reads back at the next startup. Takes `core` (rather
  * than its own standalone mCoreConfig) so this shares the same
  * already-loaded in-memory config a ROM-specific setting change might
  * also be pending in -- saving through it instead of a second, freshly-
  * loaded instance avoids clobbering any such change with stale data. */
-static void _saveAmigaOpts(struct mCore* core, bool fullscreen, int scale, int ahiUnit) {
+static void _saveAmigaOpts(struct mCore* core, bool fullscreen, int scale, int ahiUnit, bool muted) {
 	mCoreConfigSetIntValue(&core->config, AMIGA_SETTING_FULLSCREEN, fullscreen ? 1 : 0);
 	mCoreConfigSetIntValue(&core->config, AMIGA_SETTING_SCALE, scale);
 	mCoreConfigSetIntValue(&core->config, AMIGA_SETTING_AHI_UNIT, ahiUnit);
+	mCoreConfigSetIntValue(&core->config, AMIGA_SETTING_MUTED, muted ? 1 : 0);
 	mCoreConfigSave(&core->config);
 }
 
@@ -422,7 +426,7 @@ static void _quickScreenshot(struct mCore* core, const char* romPath) {
  * native Project/Settings pulldown menu (menu.h) for Quit/Open ROM.../
  * About/scale -- no on-screen GUI at all. Unchanged by the addition of
  * _runBrowser() below. */
-static int _runDirect(struct mArguments* args, bool fullscreen, int scale, int ahiUnit) {
+static int _runDirect(struct mArguments* args, bool fullscreen, int scale, int ahiUnit, bool muted) {
 	struct mCore* core = NULL;
 	struct mCoreOptions opts = {};
 	if (!_loadRom(&core, &opts, args->fname, args, fullscreen, scale)) {
@@ -437,8 +441,14 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale, int a
 	strncpy(romPath, args->fname, sizeof(romPath) - 1);
 	romPath[sizeof(romPath) - 1] = '\0';
 
+	/* `muted` is whatever "Save Settings" last wrote (default false) --
+	 * apply it to the audio process and sync the menu's own checkmark to
+	 * match, the same way MenuInit()'s own caller already does for the
+	 * scale group (see video-rtg.c). */
+	AmigaAudioSetMuted(muted);
+	MenuSetChecked(VideoRTGWindow(), MENU_ACTION_MUTE, muted);
+
 	bool paused = false;
-	bool muted = false;
 	bool quit = false;
 	while (!quit) {
 		quit = VideoRTGShouldQuit();
@@ -543,7 +553,7 @@ static int _runDirect(struct mArguments* args, bool fullscreen, int scale, int a
 			 * same "save what the user actually asked for, not today's
 			 * resolved number" reasoning MENU_ACTION_OPEN_ROM's own
 			 * comment above gives for reusing it on a ROM reload. */
-			_saveAmigaOpts(core, fullscreen, VideoRTGRequestedScale(), ahiUnit);
+			_saveAmigaOpts(core, fullscreen, VideoRTGRequestedScale(), ahiUnit, muted);
 			break;
 		default:
 			break;
@@ -588,21 +598,31 @@ static int _realMain(int argc, char** argv) {
 	s_logger = AmigaDebugLoggerInit();
 	mLogSetDefaultLogger(s_logger);
 
-	struct AmigaOpts amigaOpts = { false, 0, -1 };
-	struct mSubParser subparser = {
+	/* The shared -f/--fullscreen, -1..-8/--scale subparser every other
+	 * mgba port already registers -- see AMIGA_OPTIONS's own comment
+	 * above for why this port no longer rolls its own flag letters for
+	 * the same two concepts. */
+	struct mGraphicsOpts graphicsOpts;
+	struct mSubParser graphicsSubparser;
+	mSubParserGraphicsInit(&graphicsSubparser, &graphicsOpts);
+
+	struct AmigaOpts amigaOpts = { -1, false };
+	struct mSubParser amigaSubparser = {
 		.usage = AMIGA_USAGE,
 		.parse = _parseAmigaOpts,
 		.extraOptions = AMIGA_OPTIONS,
 		.opts = &amigaOpts
 	};
 
+	struct mSubParser subparsers[2] = { graphicsSubparser, amigaSubparser };
+
 	/* No args.fname check here, unlike before: a ROM path is now
 	 * optional -- without one, _runBrowser() below opens the ROM
 	 * browser instead of _runDirect() loading it straight away. */
 	struct mArguments args = {};
-	bool parsed = mArgumentsParse(&args, argc, argv, &subparser, 1);
+	bool parsed = mArgumentsParse(&args, argc, argv, subparsers, 2);
 	if (!parsed || args.showHelp) {
-		usage(argv[0], NULL, NULL, &subparser, 1);
+		usage(argv[0], NULL, NULL, subparsers, 2);
 		mArgumentsDeinit(&args);
 		return !parsed;
 	}
@@ -612,14 +632,26 @@ static int _realMain(int argc, char** argv) {
 		return 0;
 	}
 
+	/* graphicsOpts.fullscreen is true only if -f was actually given (its
+	 * own init leaves it false) -- same "given" meaning amigaOpts.*Given
+	 * fields track explicitly, just inherent to this field instead.
+	 * graphicsOpts.multiplier is 0 if --scale/-1..-8 wasn't given, the
+	 * same "not given" sentinel AMIGA_SETTING_SCALE already uses for
+	 * "Auto". */
+	struct AmigaSettings settings = {
+		.fullscreen = graphicsOpts.fullscreen,
+		.scale = graphicsOpts.multiplier,
+		.ahiUnit = amigaOpts.ahiUnit,
+		.muted = false,
+	};
 	/* Fills in any of fullscreen/scale/ahiUnit whose own CLI flag wasn't
-	 * given, from whatever the Settings menu's "Save Settings" last
-	 * wrote -- an explicit flag above always wins. Must run before
-	 * VideoRTGInit()/AmigaAudioInit() below, which need the final
-	 * decision already made. */
-	_loadAmigaOpts(&amigaOpts);
+	 * given (plus muted, which never has one), from whatever the
+	 * Settings menu's "Save Settings" last wrote -- an explicit flag
+	 * above always wins. Must run before VideoRTGInit()/AmigaAudioInit()
+	 * below, which need the final decision already made. */
+	_loadAmigaOpts(&settings, graphicsOpts.fullscreen, graphicsOpts.multiplier != 0, amigaOpts.ahiUnitGiven);
 
-	if (!VideoRTGInit(amigaOpts.fullscreen, amigaOpts.scale)) {
+	if (!VideoRTGInit(settings.fullscreen, settings.scale)) {
 		AmigaDebugLogf("Could not open an RTG screen/window (is Picasso96API.library installed?)\n");
 		VideoRTGDeinit();
 		mArgumentsDeinit(&args);
@@ -630,11 +662,11 @@ static int _realMain(int argc, char** argv) {
 	 * hicolor/truecolor mode to render into -- see its own comment).
 	 * Resync this local copy with whatever it actually decided, since
 	 * _runDirect()/_runBrowser() and every _loadRom()/VideoRTGReopen()
-	 * call below thread `amigaOpts.fullscreen` through as the current
+	 * call below thread `settings.fullscreen` through as the current
 	 * state, not just the original request -- leaving it stale here
 	 * would fight the real state on every later reopen (e.g. a ROM
 	 * reload would keep passing "windowed" and force it back). */
-	amigaOpts.fullscreen = VideoRTGFullscreen();
+	settings.fullscreen = VideoRTGFullscreen();
 
 	/* Not fatal if this fails (missing/ancient lowlevel.library): keyboard
 	 * input alone is still a fully working frontend. */
@@ -643,9 +675,9 @@ static int _realMain(int argc, char** argv) {
 	 * emulator still emulates. Must run before _runDirect()/_runBrowser()
 	 * load any core, since AmigaAudioBindCore() (called from both) is a
 	 * no-op without this having succeeded first. */
-	AmigaAudioInit(amigaOpts.ahiUnit);
+	AmigaAudioInit(settings.ahiUnit);
 
-	int result = args.fname ? _runDirect(&args, amigaOpts.fullscreen, amigaOpts.scale, amigaOpts.ahiUnit) : _runBrowser();
+	int result = args.fname ? _runDirect(&args, settings.fullscreen, settings.scale, settings.ahiUnit, settings.muted) : _runBrowser();
 
 	AmigaAudioDeinit();
 	GamepadDeinit();
