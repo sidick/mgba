@@ -269,6 +269,16 @@ void mCoreConfigDirectory(char* out, size_t outLength) {
 	find_directory(B_USER_SETTINGS_DIRECTORY, 0, false, path, B_PATH_NAME_LENGTH);
 	snprintf(out, outLength, "%s/%s", path, binaryName);
 	mkdir(out, 0755);
+#elif defined(__amigaos__)
+	/* ENVARC: (not ENV:) -- ENV: is just the RAM-backed mirror the
+	 * system's own Startup-Sequence copies ENVARC: into at every boot,
+	 * for programs that only ever call GetVar(). mCoreConfigLoad()/
+	 * Save() read and write this file directly by path, so there's
+	 * nothing for that mirror to serve here; ENVARC: alone already
+	 * gives both durability across reboots and immediate same-session
+	 * visibility. */
+	snprintf(out, outLength, "ENVARC:%s", binaryName);
+	mkdir(out, 0755);
 #else
 	char* xdgConfigHome = getenv("XDG_CONFIG_HOME");
 	if (xdgConfigHome && xdgConfigHome[0] == '/') {
