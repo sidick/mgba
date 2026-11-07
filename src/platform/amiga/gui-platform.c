@@ -17,9 +17,14 @@
 #include <mgba/internal/gba/input.h>
 #include <mgba-util/gui.h>
 #include <mgba-util/gui/font.h>
+#include <mgba-util/string.h>
 
 #include <stdlib.h>
 #include <string.h>
+
+#include <exec/types.h>
+#include <intuition/intuition.h>
+#include <proto/exec.h>
 
 /* FourCC-style platform ID for mInputMap/GUIInputKeys, following the
  * convention every other gui-runner.c platform uses (e.g. Wii's
@@ -149,12 +154,105 @@ static void _guiFinish(void) {
 	/* Counterpart to _guiPrepare() above -- same reasoning. */
 }
 
+/* Stashed at AmigaGuiPlatformInit() time -- same struct GUIFont*
+ * runner->params.font already holds, just also kept here since
+ * _getText() (below) has no `runner` of its own to read it from (fixed
+ * by the shared GUIKeyboardParams-only signature, gui.h). */
+static struct GUIFont* s_font;
+
+/* No on-screen keyboard: unlike every other gui-runner.c platform
+ * (3DS/PSP2/Switch/Wii), none of which implement getText() at all
+ * (confirmed -- grep turns up nothing), Amiga always has a real
+ * keyboard attached, so there's nothing to fake on screen. This reads
+ * it directly via IDCMP_VANILLAKEY (added to video-rtg.c's own window
+ * flags for exactly this -- see its own comment), which Intuition
+ * already delivers with the current keymap/shift state translated to a
+ * single ANSI character, control codes included -- no on-screen
+ * keyboard widget, no raw-keycode-to-ASCII translation of our own to
+ * get wrong.
+ *
+ * Runs its own blocking message loop directly on the window's
+ * UserPort rather than going through VideoRTGShouldQuit() (which only
+ * updates the GBA_KEY_ and AMIGA_GUI_KEY_ bitmasks, not raw text) --
+ * safe to do since nothing else is polling that port while this
+ * function blocks the caller (gui-runner.c's own loop is not running
+ * concurrently with this call). */
 static enum GUIKeyboardStatus _getText(struct GUIKeyboardParams* keyboard) {
-	/* No on-screen keyboard yet (ROM search/filename entry): honestly
-	 * refuse rather than silently doing nothing to the caller's result
-	 * buffer. */
-	UNUSED(keyboard);
-	return GUI_KEYBOARD_CANCEL;
+	struct Window* window = VideoRTGWindow();
+	if (!window || !s_font) {
+		return GUI_KEYBOARD_CANCEL;
+	}
+
+	char buffer[MAX_KEYBOARD_LEN];
+	strlcpy(buffer, keyboard->result, sizeof(buffer));
+	size_t len = strlen(buffer);
+	size_t maxLen = keyboard->maxLen;
+	if (maxLen == 0 || maxLen > sizeof(buffer) - 1) {
+		maxLen = sizeof(buffer) - 1;
+	}
+	if (len > maxLen) {
+		len = maxLen;
+		buffer[len] = '\0';
+	}
+
+	bool done = false;
+	bool cancelled = false;
+	bool dirty = true;
+	while (!done && !cancelled) {
+		if (dirty) {
+			/* Title on its own line, the text being typed (plus a plain
+			 * "_" cursor -- no blink, same static-rather-than-animated
+			 * simplicity _getText()'s caller-visible result doesn't need
+			 * anything fancier) right below it. */
+			_drawStart();
+			GUIFontPrintf(s_font, 0, 0, GUI_ALIGN_LEFT, 0xFFFFFFFF, "%s", keyboard->title);
+			GUIFontPrintf(s_font, 0, (int) GUIFontHeight(s_font), GUI_ALIGN_LEFT, 0xFFFFFFFF, "%s_", buffer);
+			_drawEnd();
+			dirty = false;
+		}
+
+		Wait(1UL << window->UserPort->mp_SigBit);
+		struct IntuiMessage* msg;
+		while ((msg = (struct IntuiMessage*) GetMsg(window->UserPort))) {
+			switch (msg->Class) {
+			case IDCMP_CLOSEWINDOW:
+				/* Swallowed here rather than acted on immediately -- the
+				 * main loop's own VideoRTGShouldQuit() picks the close
+				 * gesture back up on its very next poll once this modal
+				 * prompt returns, so a user who really meant to quit
+				 * just sees the prompt cancel first, not a stuck window. */
+				cancelled = true;
+				break;
+			case IDCMP_VANILLAKEY: {
+				UBYTE code = (UBYTE) msg->Code;
+				if (code == '\r' || code == '\n') {
+					done = true;
+				} else if (code == 0x1b) {
+					cancelled = true;
+				} else if (code == 0x08 || code == 0x7f) {
+					if (len > 0) {
+						buffer[--len] = '\0';
+						dirty = true;
+					}
+				} else if (code >= 0x20 && code < 0x7f && len < maxLen) {
+					buffer[len++] = (char) code;
+					buffer[len] = '\0';
+					dirty = true;
+				}
+				break;
+			}
+			default:
+				break;
+			}
+			ReplyMsg((struct Message*) msg);
+		}
+	}
+
+	if (cancelled) {
+		return GUI_KEYBOARD_CANCEL;
+	}
+	strlcpy(keyboard->result, buffer, sizeof(keyboard->result));
+	return GUI_KEYBOARD_DONE;
 }
 
 /* mColor (COLOR_16_BIT + COLOR_5_6_5, see video-rtg.c's own comment on
@@ -301,6 +399,7 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 	_resizeCanvas(runner);
 
 	runner->params.font = GUIFontCreate();
+	s_font = runner->params.font;
 	/* Empty, not "SYS:" -- AmigaDOS has no single filesystem root the
 	 * way POSIX has "/": SYS:, a game's own MGBA: host mount, RAM:, and
 	 * any other mounted volume all sit side by side with nothing above
@@ -367,6 +466,7 @@ void AmigaGuiPlatformInit(struct mGUIRunner* runner) {
 void AmigaGuiPlatformDeinit(struct mGUIRunner* runner) {
 	GUIFontDestroy(runner->params.font);
 	runner->params.font = NULL;
+	s_font = NULL;
 	free(s_guiCanvas);
 	s_guiCanvas = NULL;
 	s_canvasWidth = 0;

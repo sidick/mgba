@@ -398,7 +398,19 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 			WA_Activate, TRUE,
 			WA_Width, s_screenWidth,
 			WA_Height, s_screenHeight,
-			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK,
+			/* IDCMP_VANILLAKEY (alongside RAWKEY, not instead of it) only
+			 * for gui-platform.c's own _getText() text-entry prompt (see
+			 * its own comment) -- Intuition delivers it with the current
+			 * keymap/shift state already translated to a single ANSI
+			 * character (control codes like Backspace/Return/Esc
+			 * included), which is exactly what a text field wants and
+			 * saves reimplementing that translation by hand off raw
+			 * keycodes. Harmless to request unconditionally: unhandled
+			 * here in VideoRTGShouldQuit()'s own switch below (no
+			 * IDCMP_VANILLAKEY case), so outside of a getText() prompt
+			 * it's just replied and discarded like any other
+			 * unrecognized message class already is. */
+			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_VANILLAKEY | IDCMP_MENUPICK,
 			TAG_DONE);
 		if (s_window && (s_blitX > 0 || s_blitY > 0)) {
 			/* Plain black for now -- P96's own default background
@@ -436,7 +448,19 @@ bool VideoRTGReopen(bool fullscreen, int scale) {
 			WA_DepthGadget, TRUE,
 			WA_CloseGadget, TRUE,
 			WA_Activate, TRUE,
-			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MENUPICK,
+			/* IDCMP_VANILLAKEY (alongside RAWKEY, not instead of it) only
+			 * for gui-platform.c's own _getText() text-entry prompt (see
+			 * its own comment) -- Intuition delivers it with the current
+			 * keymap/shift state already translated to a single ANSI
+			 * character (control codes like Backspace/Return/Esc
+			 * included), which is exactly what a text field wants and
+			 * saves reimplementing that translation by hand off raw
+			 * keycodes. Harmless to request unconditionally: unhandled
+			 * here in VideoRTGShouldQuit()'s own switch below (no
+			 * IDCMP_VANILLAKEY case), so outside of a getText() prompt
+			 * it's just replied and discarded like any other
+			 * unrecognized message class already is. */
+			WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_VANILLAKEY | IDCMP_MENUPICK,
 			TAG_DONE);
 	}
 
