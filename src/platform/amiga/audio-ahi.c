@@ -316,6 +316,7 @@ bool AmigaAudioInit(int unit) {
 		/* The audio process already returned on its own (no ahi.device,
 		 * or AllocSignal() failed inside it) -- nothing left to tear
 		 * down there, just our own two signals. */
+		AmigaDebugLogf("Could not open ahi.device, unit %d (running silent)\n", s_shared.unit);
 		FreeSignal(s_shared.mainReadySig);
 		FreeSignal(s_shared.mainFreeSig);
 		s_initialized = false;
