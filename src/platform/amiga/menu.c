@@ -65,6 +65,8 @@ static struct NewMenu s_menuDef[] = {
 	{ NM_ITEM,  (CONST_STRPTR) "Auto",             NULL,      CHECKIT | CHECKED, ~8, USERDATA(MENU_ACTION_SCALE_AUTO) },
 	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
 	{ NM_ITEM,  (CONST_STRPTR) "Toggle Fullscreen", NULL,     0,                 0,  USERDATA(MENU_ACTION_TOGGLE_FULLSCREEN) },
+	{ NM_ITEM,  (CONST_STRPTR) NM_BARLABEL,        NULL,      0,                 0,  NULL },
+	{ NM_ITEM,  (CONST_STRPTR) "Save Settings",    NULL,      0,                 0,  USERDATA(MENU_ACTION_SAVE_SETTINGS) },
 	{ NM_END,   NULL,                              NULL,      0,                 0,  NULL },
 };
 

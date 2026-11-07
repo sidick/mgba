@@ -32,6 +32,7 @@ enum MenuAction {
 	MENU_ACTION_SCALE_3X,
 	MENU_ACTION_SCALE_AUTO,
 	MENU_ACTION_TOGGLE_FULLSCREEN,
+	MENU_ACTION_SAVE_SETTINGS,
 };
 
 /* Opens gadtools.library, builds the menu strip, and attaches it to
